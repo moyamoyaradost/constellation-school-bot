@@ -6,6 +6,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"constellation-school-bot/internal/config"
 	"constellation-school-bot/internal/database"
+	"constellation-school-bot/internal/handlers"
 )
 
 func main() {
@@ -30,11 +31,6 @@ func main() {
 	updates := bot.GetUpdatesChan(u)
 
 	for update := range updates {
-		if update.Message == nil {
-			continue
-		}
-
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Привет! Это Constellation School Bot")
-		bot.Send(msg)
+		handlers.HandleUpdate(bot, update, db)
 	}
 }
