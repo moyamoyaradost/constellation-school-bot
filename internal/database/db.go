@@ -35,6 +35,10 @@ func Connect(cfg *config.Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("ошибка миграции статусов: %w", err)
 	}
 
+	if err := removeRedundantFields(db); err != nil {
+		return nil, fmt.Errorf("ошибка удаления избыточных полей: %w", err)
+	}
+
 	log.Println("База данных подключена и таблицы созданы")
 	return db, nil
 }
@@ -205,6 +209,23 @@ func migrateStatuses(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("ошибка миграции статусов записей: %w", err)
 	}
+
+	return nil
+}
+
+func removeRedundantFields(db *sql.DB) error {
+	// Удаляем неиспользуемое поле default_duration из subjects
+	_, err := db.Exec(`
+		ALTER TABLE subjects 
+		DROP COLUMN IF EXISTS default_duration
+	`)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления поля default_duration: %w", err)
+	}
+
+	// Можно добавить удаление других избыточных полей в будущем
+	// ALTER TABLE teachers DROP COLUMN IF EXISTS specializations
+	// ALTER TABLE students DROP COLUMN IF EXISTS selected_subjects
 
 	return nil
 }
