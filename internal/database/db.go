@@ -223,9 +223,20 @@ func removeRedundantFields(db *sql.DB) error {
 		return fmt.Errorf("ошибка удаления поля default_duration: %w", err)
 	}
 
-	// Можно добавить удаление других избыточных полей в будущем
-	// ALTER TABLE teachers DROP COLUMN IF EXISTS specializations
-	// ALTER TABLE students DROP COLUMN IF EXISTS selected_subjects
+	// Обновляем default значения для статусов
+	_, err = db.Exec(`
+		ALTER TABLE lessons ALTER COLUMN status SET DEFAULT 'active'
+	`)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления default для lessons.status: %w", err)
+	}
+
+	_, err = db.Exec(`
+		ALTER TABLE enrollments ALTER COLUMN status SET DEFAULT 'enrolled'  
+	`)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления default для enrollments.status: %w", err)
+	}
 
 	return nil
 }
