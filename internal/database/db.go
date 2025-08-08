@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	
 	_ "github.com/lib/pq"
 	"constellation-school-bot/internal/config"
@@ -40,7 +41,7 @@ func Connect(cfg *config.Config) (*sql.DB, error) {
 
 func createTables(db *sql.DB) error {
 	tables := []string{
-		`CREATE TABLE users (
+		`CREATE TABLE IF NOT EXISTS users (
 			id SERIAL PRIMARY KEY,
 			tg_id VARCHAR(100) UNIQUE NOT NULL,
 			role VARCHAR(20) NOT NULL,
@@ -50,17 +51,17 @@ func createTables(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 		
-		`CREATE TABLE teachers (
+		`CREATE TABLE IF NOT EXISTS teachers (
 			id SERIAL PRIMARY KEY,
 			user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		
-		`CREATE TABLE students (
+		`CREATE TABLE IF NOT EXISTS students (
 			id SERIAL PRIMARY KEY,
 			user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		
-		`CREATE TABLE subjects (
+		`CREATE TABLE IF NOT EXISTS subjects (
 			id SERIAL PRIMARY KEY,
 			name VARCHAR(255) NOT NULL,
 			code VARCHAR(50) UNIQUE NOT NULL,
@@ -69,7 +70,7 @@ func createTables(db *sql.DB) error {
 			is_active BOOLEAN DEFAULT true
 		)`,
 		
-		`CREATE TABLE lessons (
+		`CREATE TABLE IF NOT EXISTS lessons (
 			id SERIAL PRIMARY KEY,
 			teacher_id INTEGER REFERENCES teachers(id),
 			subject_id INTEGER REFERENCES subjects(id),
@@ -80,7 +81,7 @@ func createTables(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 		
-		`CREATE TABLE enrollments (
+		`CREATE TABLE IF NOT EXISTS enrollments (
 			id SERIAL PRIMARY KEY,
 			student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
 			lesson_id INTEGER REFERENCES lessons(id) ON DELETE CASCADE,
@@ -88,7 +89,7 @@ func createTables(db *sql.DB) error {
 			enrolled_at TIMESTAMP DEFAULT NOW()
 		)`,
 		
-		`CREATE TABLE waitlist (
+		`CREATE TABLE IF NOT EXISTS waitlist (
 			id SERIAL PRIMARY KEY,
 			student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
 			lesson_id INTEGER REFERENCES lessons(id) ON DELETE CASCADE,
@@ -105,15 +106,18 @@ func createTables(db *sql.DB) error {
 
 	// Создаем простые индексы
 	constraints := []string{
-		`CREATE INDEX IF NOT EXISTS idx_users_tg_id ON users(tg_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_lessons_start_time ON lessons(start_time)`,
-		`CREATE INDEX IF NOT EXISTS idx_enrollments_lesson_id ON enrollments(lesson_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_waitlist_lesson_id ON waitlist(lesson_id)`,
+		`CREATE INDEX idx_users_tg_id ON users(tg_id)`,
+		`CREATE INDEX idx_lessons_start_time ON lessons(start_time)`,
+		`CREATE INDEX idx_enrollments_lesson_id ON enrollments(lesson_id)`,
+		`CREATE INDEX idx_waitlist_lesson_id ON waitlist(lesson_id)`,
 	}
 	
 	for _, constraint := range constraints {
 		if _, err := db.Exec(constraint); err != nil {
-			return fmt.Errorf("ошибка создания ограничения: %w", err)
+			// Игнорируем ошибку, если индекс уже существует
+			if !strings.Contains(err.Error(), "already exists") {
+				return fmt.Errorf("ошибка создания ограничения: %w", err)
+			}
 		}
 	}
 
