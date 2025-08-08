@@ -76,26 +76,47 @@
 5. **Веб-разработка** (WEB_DEV) - programming
 6. **Компьютерная грамотность** (COMPUTER_LITERACY) - basics
 
-#### 4. Скрипт для тестирования:
-`scripts/db_inspect.sh` - запуск PostgreSQL и команды для просмотра схемы
+#### 4. Скрипт для тестирования + pgAdmin4:
+- `scripts/db_inspect.sh` - запуск PostgreSQL + pgAdmin4  
+- `scripts/setup_db.go` - создание таблиц и пользователей
+- `DATABASE_INFO.md` - полная информация для подключения
 
 ### Как протестировать БД:
 
-1. Запуск PostgreSQL:
+#### Вариант 1: pgAdmin4 (Рекомендуется)
+1. Запуск сервисов:
 ```bash
 ./scripts/db_inspect.sh
 ```
 
-2. Подключение к БД:
+2. Открыть pgAdmin4:
+- URL: http://localhost:8080
+- Email: admin@constellation.local
+- Password: admin123
+
+3. Добавить сервер в pgAdmin:
+- Host: localhost
+- Port: 5433  
+- Database: constellation_db
+- Username: constellation_user
+- Password: constellation_pass
+
+#### Вариант 2: Прямое подключение через psql
 ```bash
 docker exec -it constellation_postgres psql -U constellation_user -d constellation_db
 ```
 
-3. Просмотр таблиц:
+#### Полезные SQL команды:
 ```sql
 \dt                    -- список таблиц
 \d users              -- структура таблицы
 SELECT * FROM subjects; -- просмотр предметов
 ```
+
+### ✅ Результат тестирования:
+- Все 6 таблиц созданы успешно  
+- 6 предметов ЦДК добавлены в БД
+- pgAdmin4 работает на http://localhost:8080
+- PostgreSQL доступен на порту 5433
 
 Схема БД готова для работы FSM и всех команд бота.
