@@ -49,9 +49,7 @@ func createTables(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS teachers (
 			id SERIAL PRIMARY KEY,
 			user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-			specializations TEXT[],
-			description TEXT,
-			max_students_per_lesson INTEGER DEFAULT 10
+			specializations TEXT[]
 		)`,
 		
 		`CREATE TABLE IF NOT EXISTS students (
@@ -67,7 +65,6 @@ func createTables(db *sql.DB) error {
 			category VARCHAR(50) NOT NULL,
 			default_duration INTEGER DEFAULT 90,
 			description TEXT,
-			competencies JSONB,
 			is_active BOOLEAN DEFAULT true
 		)`,
 		
@@ -79,7 +76,6 @@ func createTables(db *sql.DB) error {
 			duration_minutes INTEGER DEFAULT 90,
 			max_students INTEGER DEFAULT 10,
 			status VARCHAR(30) DEFAULT 'scheduled',
-			created_by_superuser_id INTEGER REFERENCES users(id),
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 		
@@ -88,16 +84,26 @@ func createTables(db *sql.DB) error {
 			student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
 			lesson_id INTEGER REFERENCES lessons(id) ON DELETE CASCADE,
 			status VARCHAR(30) DEFAULT 'scheduled',
-			enrolled_at TIMESTAMP DEFAULT NOW(),
-			confirmed_at TIMESTAMP,
-			cancellation_reason TEXT,
-			feedback TEXT
+			enrolled_at TIMESTAMP DEFAULT NOW()
 		)`,
 	}
 
 	for _, table := range tables {
 		if _, err := db.Exec(table); err != nil {
 			return fmt.Errorf("ошибка создания таблицы: %w", err)
+		}
+	}
+
+	// Создаем простые индексы
+	constraints := []string{
+		`CREATE INDEX IF NOT EXISTS idx_users_tg_id ON users(tg_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_lessons_start_time ON lessons(start_time)`,
+		`CREATE INDEX IF NOT EXISTS idx_enrollments_lesson_id ON enrollments(lesson_id)`,
+	}
+	
+	for _, constraint := range constraints {
+		if _, err := db.Exec(constraint); err != nil {
+			return fmt.Errorf("ошибка создания ограничения: %w", err)
 		}
 	}
 

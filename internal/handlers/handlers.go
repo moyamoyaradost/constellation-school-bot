@@ -45,6 +45,10 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) 
 		handleScheduleCommand(bot, message, db)
 	case "enroll":
 		handleEnrollCommand(bot, message, db)
+	case "create_lesson":
+		handleCreateLessonCommand(bot, message, db)
+	case "reschedule_lesson":
+		handleRescheduleLessonCommand(bot, message, db)
 	case "my_lessons":
 		handleMyLessonsCommand(bot, message, db)
 	default:
@@ -500,5 +504,49 @@ func handleEnrollCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, d
 		subjectName, startTime.Format("02.01.2006 15:04"))
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "Markdown"
+	bot.Send(msg)
+}
+
+// Команда создания урока для teachers/superusers
+func handleCreateLessonCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
+	userID := message.From.ID
+	chatID := message.Chat.ID
+	
+	// Проверяем роль (teacher или superuser)
+	var role string
+	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&role)
+	if err != nil || (role != "teacher" && role != "superuser") {
+		msg := tgbotapi.NewMessage(chatID, "❌ У вас нет прав для создания уроков")
+		bot.Send(msg)
+		return
+	}
+	
+	msg := tgbotapi.NewMessage(chatID, "🔧 **Создание урока**\n\n" +
+		"Формат: `/create_lesson <предмет> <дата> <время>`\n" +
+		"Пример: `/create_lesson математика 15.08.2025 14:30`\n\n" +
+		"📝 Доступные предметы: /subjects")
+	msg.ParseMode = "Markdown"
+	bot.Send(msg)
+}
+
+// Команда переноса урока для teachers/superusers  
+func handleRescheduleLessonCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
+	userID := message.From.ID
+	chatID := message.Chat.ID
+	
+	// Проверяем роль (teacher или superuser)
+	var role string
+	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&role)
+	if err != nil || (role != "teacher" && role != "superuser") {
+		msg := tgbotapi.NewMessage(chatID, "❌ У вас нет прав для переноса уроков")
+		bot.Send(msg)
+		return
+	}
+	
+	msg := tgbotapi.NewMessage(chatID, "📅 **Перенос урока**\n\n" +
+		"Формат: `/reschedule_lesson <ID урока> <новая дата> <новое время>`\n" +
+		"Пример: `/reschedule_lesson 123 16.08.2025 15:00`\n\n" +
+		"📋 Ваши уроки: /my_lessons")
+	msg.ParseMode = "Markdown" 
 	bot.Send(msg)
 }
