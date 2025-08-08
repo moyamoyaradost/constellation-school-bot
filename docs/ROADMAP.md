@@ -51,11 +51,41 @@
 - Валидация времени и конфликтов
 - Уведомления студентов о изменениях
 
-### ⏳ Шаг 7: enrollments + лист ожидания (/waitlist)
-**План:**
-- Обработка переполненных уроков
-- Команда /waitlist для очереди
-- Автоматическое уведомление при освобождении места
+## ✅ Step 7: Waitlist Management (COMPLETED)
+**Status**: ✅ COMPLETED
+**Description**: Implement waitlist functionality for overbooked lessons
+
+### Completed Features:
+- ✅ Created `waitlist` table with proper schema and indexes
+- ✅ Added `/waitlist` command showing overflowing lessons and queue positions  
+- ✅ Modified `/enroll` logic to auto-add students to waitlist when lessons full
+- ✅ Implemented automatic queue position calculation
+- ✅ Fixed SQL queries to match actual database schema
+- ✅ Tested full cycle: overflow → waitlist → spot opens → auto-enroll
+- ✅ Queue position recalculation when students move from waitlist to lesson
+
+### Database Changes:
+```sql
+CREATE TABLE waitlist (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    lesson_id INTEGER REFERENCES lessons(id) ON DELETE CASCADE, 
+    position INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+---
+
+## 🔄 Step 8: Soft Delete + Basic Audit (IN PROGRESS)
+**Status**: 🔄 IN PROGRESS  
+**Description**: Add soft-delete functionality and basic audit trail
+
+### Requirements:
+- [ ] Add `deleted_at` TIMESTAMP fields to main tables
+- [ ] Modify queries to exclude soft-deleted records
+- [ ] Create simple audit log table for critical operations
+- [ ] Add basic restore functionality for accidentally deleted records
 
 ### ⏳ Шаг 8: soft-delete + простой audit
 **План:**
@@ -71,9 +101,16 @@
 
 ### ⏳ Шаг 10: базовые тесты + простой CI
 **План:**
-- tests/integration_test.go
-- GitHub Actions workflow
-- Автоматизированный деплой
+- ✅ **Простые тесты БД созданы** (internal/database/db_test.go)
+  - TestCreateManyUsers: 100 пользователей + проверка уникальности
+  - TestCascadeDelete: проверка каскадного удаления user → student → enrollment  
+  - TestConcurrentEnrollments: 10 одновременных записей без дублей
+- ✅ **TestContainers интеграция** для изолированного тестирования
+- ✅ **Скрипт запуска тестов** (scripts/test_db.sh)
+- ✅ **Документация тестов** (docs/DATABASE_TESTS.md)
+- [ ] tests/integration_test.go - интеграционные тесты команд бота
+- [ ] GitHub Actions workflow - автоматизированный CI
+- [ ] Автоматизированный деплой
 
 ---
 

@@ -46,6 +46,7 @@ CREATE INDEX idx_enrollments_lesson_id ON enrollments(lesson_id);
 
 -- Простая валидация:  
 ALTER TABLE users ADD CONSTRAINT check_role CHECK (role IN ('student','teacher','superuser'));
+ALTER TABLE users ADD CONSTRAINT check_phone_format CHECK (phone ~ '^\+7\d{10}$');
 ```
 
 ## === РОЛИ И КОМАНДЫ (МИНИМУМ) ===  

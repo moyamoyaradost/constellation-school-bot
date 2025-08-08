@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -179,7 +180,8 @@ func handleNameInput(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB
 	
 	msg := tgbotapi.NewMessage(message.Chat.ID,
 		fmt.Sprintf("✅ Имя сохранено: %s\n\n"+
-		"Шаг 2 из 3: Введите ваш номер телефона (например: +7 999 123 45 67)", name))
+		"Шаг 2 из 3: Введите ваш номер телефона в формате +7XXXXXXXXXX\n"+
+		"Пример: +79991234567", name))
 	
 	bot.Send(msg)
 }
@@ -189,14 +191,17 @@ func handlePhoneInput(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.D
 	userID := message.From.ID
 	phone := strings.TrimSpace(message.Text)
 	
-	// Простая валидация телефона
-	if len(phone) < 10 {
-		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Некорректный номер телефона. Введите корректный номер:")
+	// ЖЁСТКАЯ ВАЛИДАЦИЯ: только формат +7XXXXXXXXXX
+	phoneRegex := regexp.MustCompile(`^\+7\d{10}$`)
+	if !phoneRegex.MatchString(phone) {
+		msg := tgbotapi.NewMessage(message.Chat.ID, 
+			"❌ Неверный формат номера. Пожалуйста, введите номер в формате +7XXXXXXXXXX\n\n"+
+			"Пример: +79991234567")
 		bot.Send(msg)
 		return
 	}
 	
-	// Сохранить телефон
+	// Сохранить телефон только после валидации
 	userData[userID]["phone"] = phone
 	setUserState(userID, StateSelectingSubjects)
 	
