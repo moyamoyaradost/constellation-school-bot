@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -42,6 +43,8 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) 
 		handleSubjectsCommand(bot, message, db)
 	case "schedule":
 		handleScheduleCommand(bot, message, db)
+	case "enroll":
+		handleEnrollCommand(bot, message, db)
 	case "my_lessons":
 		handleMyLessonsCommand(bot, message, db)
 	default:
@@ -84,6 +87,9 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db
 		
 	case strings.HasPrefix(data, "subject_"):
 		handleSubjectCallback(bot, query, db)
+		
+	case strings.HasPrefix(data, "enroll_"):
+		handleEnrollCallback(bot, query, db)
 		
 	case data == "finish_registration":
 		finishStudentRegistration(bot, userID, chatID, db)
@@ -253,19 +259,246 @@ func handleHelp(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 
 // Заглушки для других команд (будут реализованы в следующих шагах)
 func handleSubjectsCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	msg := tgbotapi.NewMessage(message.Chat.ID, 
-		"🎯 Управление предметами будет доступно в следующих обновлениях")
+	// Получаем все активные предметы
+	rows, err := db.Query("SELECT name, description, category FROM subjects WHERE is_active = true ORDER BY name")
+	if err != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Ошибка загрузки предметов")
+		bot.Send(msg)
+		return
+	}
+	defer rows.Close()
+
+	var subjects []string
+	for rows.Next() {
+		var name, description, category string
+		if err := rows.Scan(&name, &description, &category); err != nil {
+			continue
+		}
+		subjects = append(subjects, fmt.Sprintf("📚 **%s** (%s)\n%s", name, category, description))
+	}
+
+	if len(subjects) == 0 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "📚 Пока нет доступных предметов")
+		bot.Send(msg)
+		return
+	}
+
+	text := "🎯 **Доступные предметы:**\n\n" + strings.Join(subjects, "\n\n")
+	msg := tgbotapi.NewMessage(message.Chat.ID, text)
+	msg.ParseMode = "Markdown"
 	bot.Send(msg)
 }
 
 func handleScheduleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	msg := tgbotapi.NewMessage(message.Chat.ID, 
-		"📅 Просмотр расписания будет доступен в следующих обновлениях")
+	// Получаем уроки на ближайшие 7 дней
+	rows, err := db.Query(`
+		SELECT l.start_time, s.name, u.full_name, l.max_students,
+			COUNT(e.id) as enrolled_count
+		FROM lessons l
+		JOIN subjects s ON l.subject_id = s.id  
+		LEFT JOIN teachers t ON l.teacher_id = t.id
+		LEFT JOIN users u ON t.user_id = u.id
+		LEFT JOIN enrollments e ON l.id = e.lesson_id AND e.status = 'confirmed'
+		WHERE l.start_time > NOW() AND l.start_time < NOW() + INTERVAL '7 days'
+			AND l.soft_deleted = false
+		GROUP BY l.id, l.start_time, s.name, u.full_name, l.max_students
+		ORDER BY l.start_time
+		LIMIT 10
+	`)
+	if err != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Ошибка загрузки расписания")
+		bot.Send(msg)
+		return
+	}
+	defer rows.Close()
+
+	var lessons []string
+	for rows.Next() {
+		var startTime time.Time
+		var subjectName, teacherName string
+		var maxStudents, enrolledCount int
+		
+		if err := rows.Scan(&startTime, &subjectName, &teacherName, &maxStudents, &enrolledCount); err != nil {
+			continue
+		}
+		
+		freeSpots := maxStudents - enrolledCount
+		status := fmt.Sprintf("(%d/%d мест)", enrolledCount, maxStudents)
+		if freeSpots == 0 {
+			status += " 🔴"
+		} else if freeSpots <= 2 {
+			status += " 🟡" 
+		} else {
+			status += " 🟢"
+		}
+		
+		lesson := fmt.Sprintf("📅 %s\n📚 %s\n👨‍🏫 %s\n%s", 
+			startTime.Format("02.01.2006 15:04"), subjectName, teacherName, status)
+		lessons = append(lessons, lesson)
+	}
+
+	if len(lessons) == 0 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "📅 На ближайшую неделю уроков не запланировано")
+		bot.Send(msg)
+		return
+	}
+
+	text := "📅 **Расписание на неделю:**\n\n" + strings.Join(lessons, "\n\n")
+	msg := tgbotapi.NewMessage(message.Chat.ID, text)
+	msg.ParseMode = "Markdown"
+	bot.Send(msg)
+}
+
+func handleEnrollCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
+	userID := message.From.ID
+	
+	// Проверяем, что пользователь зарегистрирован как студент
+	var studentID int
+	err := db.QueryRow("SELECT s.id FROM students s JOIN users u ON s.user_id = u.id WHERE u.tg_id = $1", 
+		strconv.FormatInt(userID, 10)).Scan(&studentID)
+	if err != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Сначала зарегистрируйтесь как студент с помощью /register")
+		bot.Send(msg)
+		return
+	}
+
+	// Получаем доступные для записи уроки
+	rows, err := db.Query(`
+		SELECT l.id, l.start_time, s.name, u.full_name, l.max_students,
+			COUNT(e.id) as enrolled_count
+		FROM lessons l
+		JOIN subjects s ON l.subject_id = s.id  
+		LEFT JOIN teachers t ON l.teacher_id = t.id
+		LEFT JOIN users u ON t.user_id = u.id
+		LEFT JOIN enrollments e ON l.id = e.lesson_id AND e.status = 'confirmed'
+		WHERE l.start_time > NOW() AND l.soft_deleted = false
+		GROUP BY l.id, l.start_time, s.name, u.full_name, l.max_students
+		HAVING COUNT(e.id) < l.max_students
+		ORDER BY l.start_time
+		LIMIT 10
+	`)
+	if err != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Ошибка загрузки доступных уроков")
+		bot.Send(msg)
+		return
+	}
+	defer rows.Close()
+
+	var keyboard [][]tgbotapi.InlineKeyboardButton
+	var lessons []string
+	
+	for rows.Next() {
+		var lessonID, maxStudents, enrolledCount int
+		var startTime time.Time
+		var subjectName, teacherName string
+		
+		if err := rows.Scan(&lessonID, &startTime, &subjectName, &teacherName, &maxStudents, &enrolledCount); err != nil {
+			continue
+		}
+		
+		freeSpots := maxStudents - enrolledCount
+		lesson := fmt.Sprintf("📅 %s\n📚 %s\n👨‍🏫 %s\n🆓 %d мест свободно", 
+			startTime.Format("02.01.2006 15:04"), subjectName, teacherName, freeSpots)
+		lessons = append(lessons, lesson)
+		
+		// Кнопка для записи
+		btn := tgbotapi.NewInlineKeyboardButtonData(
+			fmt.Sprintf("Записаться на %s", subjectName),
+			fmt.Sprintf("enroll_%d", lessonID))
+		keyboard = append(keyboard, []tgbotapi.InlineKeyboardButton{btn})
+	}
+
+	if len(lessons) == 0 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "📝 Нет доступных для записи уроков")
+		bot.Send(msg)
+		return
+	}
+
+	text := "📝 **Выберите урок для записи:**\n\n" + strings.Join(lessons, "\n\n")
+	msg := tgbotapi.NewMessage(message.Chat.ID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(keyboard...)
 	bot.Send(msg)
 }
 
 func handleMyLessonsCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 	msg := tgbotapi.NewMessage(message.Chat.ID, 
 		"📖 Просмотр ваших уроков будет доступен в следующих обновлениях")
+	bot.Send(msg)
+}
+
+// Обработка записи на урок через callback
+func handleEnrollCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB) {
+	userID := query.From.ID
+	chatID := query.Message.Chat.ID
+	
+	// Извлекаем ID урока из callback data
+	lessonIDStr := strings.TrimPrefix(query.Data, "enroll_")
+	lessonID, err := strconv.Atoi(lessonIDStr)
+	if err != nil {
+		msg := tgbotapi.NewMessage(chatID, "❌ Ошибка: неверный ID урока")
+		bot.Send(msg)
+		return
+	}
+	
+	// Получаем ID студента
+	var studentID int
+	err = db.QueryRow("SELECT s.id FROM students s JOIN users u ON s.user_id = u.id WHERE u.tg_id = $1", 
+		strconv.FormatInt(userID, 10)).Scan(&studentID)
+	if err != nil {
+		msg := tgbotapi.NewMessage(chatID, "❌ Сначала зарегистрируйтесь как студент")
+		bot.Send(msg)
+		return
+	}
+	
+	// Проверяем, не записан ли уже студент на этот урок
+	var existingEnrollment int
+	err = db.QueryRow("SELECT COUNT(*) FROM enrollments WHERE student_id = $1 AND lesson_id = $2 AND status = 'confirmed'", 
+		studentID, lessonID).Scan(&existingEnrollment)
+	if err == nil && existingEnrollment > 0 {
+		msg := tgbotapi.NewMessage(chatID, "ℹ️ Вы уже записаны на этот урок")
+		bot.Send(msg)
+		return
+	}
+	
+	// Проверяем свободные места
+	var enrolledCount, maxStudents int
+	var subjectName string
+	var startTime time.Time
+	err = db.QueryRow(`
+		SELECT COUNT(e.id), l.max_students, s.name, l.start_time
+		FROM lessons l
+		JOIN subjects s ON l.subject_id = s.id
+		LEFT JOIN enrollments e ON l.id = e.lesson_id AND e.status = 'confirmed'
+		WHERE l.id = $1 AND l.soft_deleted = false
+		GROUP BY l.id, l.max_students, s.name, l.start_time
+	`, lessonID).Scan(&enrolledCount, &maxStudents, &subjectName, &startTime)
+	
+	if err != nil {
+		msg := tgbotapi.NewMessage(chatID, "❌ Урок не найден или отменен")
+		bot.Send(msg)
+		return
+	}
+	
+	if enrolledCount >= maxStudents {
+		msg := tgbotapi.NewMessage(chatID, "❌ На урок нет свободных мест")
+		bot.Send(msg)
+		return
+	}
+	
+	// Записываем студента на урок
+	_, err = db.Exec("INSERT INTO enrollments (student_id, lesson_id, status, enrolled_at) VALUES ($1, $2, 'confirmed', NOW())", 
+		studentID, lessonID)
+	if err != nil {
+		msg := tgbotapi.NewMessage(chatID, "❌ Ошибка при записи на урок")
+		bot.Send(msg)
+		return
+	}
+	
+	// Подтверждение записи
+	text := fmt.Sprintf("✅ **Успешная запись!**\n\n📚 Урок: %s\n📅 Дата: %s\n\n💡 Не забудьте прийти вовремя!", 
+		subjectName, startTime.Format("02.01.2006 15:04"))
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
 	bot.Send(msg)
 }
