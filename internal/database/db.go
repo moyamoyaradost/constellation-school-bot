@@ -241,3 +241,83 @@ func removeRedundantFields(db *sql.DB) error {
 
 	return nil
 }
+
+// CancelLesson отменяет урок и обновляет все связанные записи студентов
+// Автор: Maksim Novihin
+func CancelLesson(db *sql.DB, lessonID int) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("ошибка начала транзакции: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Обновляем статус урока на 'cancelled'
+	_, err = tx.Exec(`
+		UPDATE lessons 
+		SET status = 'cancelled' 
+		WHERE id = $1 AND status = 'active'
+	`, lessonID)
+	if err != nil {
+		return fmt.Errorf("ошибка отмены урока: %w", err)
+	}
+
+	// Обновляем статусы всех записей студентов на 'cancelled'
+	_, err = tx.Exec(`
+		UPDATE enrollments 
+		SET status = 'cancelled' 
+		WHERE lesson_id = $1 AND status = 'enrolled'
+	`, lessonID)
+	if err != nil {
+		return fmt.Errorf("ошибка отмены записей студентов: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// EnrollStudent записывает студента на урок
+// Автор: Maksim Novihin  
+func EnrollStudent(db *sql.DB, studentID, lessonID int) error {
+	_, err := db.Exec(`
+		INSERT INTO enrollments (student_id, lesson_id, status) 
+		VALUES ($1, $2, 'enrolled')
+	`, studentID, lessonID)
+	
+	if err != nil {
+		return fmt.Errorf("ошибка записи студента на урок: %w", err)
+	}
+	
+	return nil
+}
+
+// NotifyStudentsLessonCancelled получает список студентов для уведомления об отмене урока
+// Автор: Maksim Novihin
+func NotifyStudentsLessonCancelled(db *sql.DB, lessonID int) ([]int, error) {
+	query := `
+		SELECT DISTINCT u.id 
+		FROM users u
+		JOIN students s ON u.id = s.user_id  
+		JOIN enrollments e ON s.id = e.student_id
+		WHERE e.lesson_id = $1 AND e.status = 'cancelled'
+	`
+	
+	rows, err := db.Query(query, lessonID)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения списка студентов: %w", err)
+	}
+	defer rows.Close()
+
+	var userIDs []int
+	for rows.Next() {
+		var userID int
+		if err := rows.Scan(&userID); err != nil {
+			return nil, fmt.Errorf("ошибка сканирования ID пользователя: %w", err)
+		}
+		userIDs = append(userIDs, userID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка итерации по результатам: %w", err)
+	}
+
+	return userIDs, nil
+}
