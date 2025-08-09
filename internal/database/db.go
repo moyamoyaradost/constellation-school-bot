@@ -108,12 +108,13 @@ func createTables(db *sql.DB) error {
 		}
 	}
 
-	// Создаем простые индексы
+	// Создаем только критичные индексы для малого бизнеса (50-100 пользователей)
 	constraints := []string{
-		`CREATE INDEX idx_users_tg_id ON users(tg_id)`,
-		`CREATE INDEX idx_lessons_start_time ON lessons(start_time)`,
-		`CREATE INDEX idx_enrollments_lesson_id ON enrollments(lesson_id)`,
-		`CREATE INDEX idx_waitlist_lesson_id ON waitlist(lesson_id)`,
+		`CREATE INDEX idx_users_tg_id ON users(tg_id)`,           // КРИТИЧЕН: каждый запрос к боту
+		`CREATE INDEX idx_lessons_start_time ON lessons(start_time)`, // КРИТИЧЕН: расписание и сортировка
+		// Убраны избыточные индексы для упрощения (NO OVER-ENGINEERING):
+		// - idx_enrollments_lesson_id (можно восстановить при росте >100 пользователей)
+		// - idx_waitlist_lesson_id (используется редко, только при переполнении)
 	}
 	
 	for _, constraint := range constraints {
