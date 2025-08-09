@@ -1,5 +1,9 @@
 # МАСТЕР-ПРОМПТ ДЛЯ МАЛОГО БИЗНЕСА (до 50 студентов)
 
+**Автор:** Maksim Novihin  
+**Создано:** 2025-08-09 00:00 UTC  
+**Версия:** 2.0 (Updated with authorship requirements)
+
 ТЫ – GOLANG РАЗРАБОТЧИК. СТРОГО РАБОТАЕШЬ В СУЩЕСТВУЮЩЕЙ СТРУКТУРЕ:
 
 ```
@@ -76,6 +80,46 @@ ALTER TABLE users ADD CONSTRAINT check_phone_format CHECK (phone ~ '^\+7\d{10}$'
 • tests/integration_test.go – /start, /add_teacher, /enroll  
 • НИКАКИХ сложных моков или testcontainers
 
+## === ПРАВИЛА КОММИТОВ ===
+**ОБЯЗАТЕЛЬНЫЙ ФОРМАТ:**
+```
+[TYPE] Component: Brief description
+
+👤 Author: Maksim Novihin  
+📅 Date: YYYY-MM-DD HH:MM UTC
+🎯 Changes:
+- Specific change 1
+- Specific change 2
+
+📊 Impact: Business/Technical impact
+```
+
+**Типы:** FEAT, FIX, DOCS, REFACTOR, TEST, CHORE
+
+**Пример:**
+```bash
+git commit -m "FEAT Database: Add waitlist functionality
+
+👤 Author: Maksim Novihin
+📅 Date: 2025-08-08 21:01 UTC
+🎯 Changes:  
+- Added waitlist table with proper indexes
+- Enhanced migration with ALTER TABLE commands
+- Updated handlers for waitlist operations
+
+📊 Impact: Enables lesson queuing for overbooked classes"
+```
+
+## === ДОКУМЕНТИРОВАНИЕ ===
+**Каждый документ ОБЯЗАТЕЛЬНО содержит:**
+```markdown
+# [Title]
+**Автор:** Maksim Novihin
+**Дата:** YYYY-MM-DD HH:MM UTC  
+**Версия:** X.Y
+**Статус:** [Draft/Complete]
+```
+
 ## === ПРОСТОЙ CI/CD ===  
 .github/workflows/simple.yml:  
 • go test ./...  
@@ -84,8 +128,9 @@ ALTER TABLE users ADD CONSTRAINT check_phone_format CHECK (phone ~ '^\+7\d{10}$'
 • deploy script (если нужно)
 
 ## ПОСЛЕ КАЖДОГО ШАГА:  
-1. Создать/обновить `docs/step_N.md`  
-2. Коммит в формате: [YYYY-MM-DD] Шаг N: описание
+1. Создать/обновить `docs/step_N.md` С УКАЗАНИЕМ АВТОРА
+2. Коммит в ОБЯЗАТЕЛЬНОМ формате с именем Maksim Novihin
+3. Время указывать ТОЧНОЕ в UTC
 
 ---
 
