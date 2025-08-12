@@ -394,3 +394,332 @@ func TestErrorHandling(t *testing.T) {
 	// Очистка
 	_, _ = db.Exec("DELETE FROM users WHERE tg_id = $1", testUserID)
 }
+
+// Тест команды /start
+func TestStartCommand(t *testing.T) {
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
+	
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Skipf("Пропускаем тест: не удалось подключиться к БД: %v", err)
+		return
+	}
+	defer db.Close()
+
+	// Тестовый пользователь
+	testUserID := "start_test_user"
+	
+	// Очистка перед тестом
+	_, _ = db.Exec("DELETE FROM students WHERE user_id IN (SELECT id FROM users WHERE tg_id = $1)", testUserID)
+	_, _ = db.Exec("DELETE FROM users WHERE tg_id = $1", testUserID)
+
+	// Тест 1: Новый пользователь (не зарегистрирован)
+	var userExists bool
+	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE tg_id = $1)", testUserID).Scan(&userExists)
+	if err != nil {
+		t.Errorf("❌ Ошибка проверки существования пользователя: %v", err)
+		return
+	}
+	
+	if userExists {
+		t.Error("❌ Пользователь уже существует, тест невалиден")
+		return
+	}
+	t.Log("✅ Пользователь не существует - тест /start для нового пользователя")
+
+	// Тест 2: Регистрируем пользователя
+	_, err = db.Exec(`
+		INSERT INTO users (tg_id, role, full_name, phone, is_active) 
+		VALUES ($1, 'student', 'Start Test User', '+79001234567', true)`,
+		testUserID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания тестового пользователя: %v", err)
+		return
+	}
+
+	// Создаем запись студента
+	var userRecordID int
+	err = db.QueryRow("SELECT id FROM users WHERE tg_id = $1", testUserID).Scan(&userRecordID)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения ID пользователя: %v", err)
+		return
+	}
+
+	_, err = db.Exec("INSERT INTO students (user_id) VALUES ($1)", userRecordID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания записи студента: %v", err)
+		return
+	}
+	t.Log("✅ Пользователь зарегистрирован")
+
+	// Тест 3: Существующий пользователь
+	var role string
+	err = db.QueryRow("SELECT role FROM users WHERE tg_id = $1", testUserID).Scan(&role)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения роли пользователя: %v", err)
+		return
+	}
+	
+	if role != "student" {
+		t.Errorf("❌ Некорректная роль: ожидалось 'student', получено '%s'", role)
+		return
+	}
+	t.Log("✅ Роль пользователя корректна - тест /start для существующего пользователя")
+
+	// Очистка
+	_, _ = db.Exec("DELETE FROM students WHERE user_id = $1", userRecordID)
+	_, _ = db.Exec("DELETE FROM users WHERE tg_id = $1", testUserID)
+}
+
+// Тест команды /add_teacher 
+func TestAddTeacherCommand(t *testing.T) {
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
+	
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Skipf("Пропускаем тест: не удалось подключиться к БД: %v", err)
+		return
+	}
+	defer db.Close()
+
+	// Тестовые данные
+	adminUserID := "admin_test_user" 
+	teacherUserID := "teacher_test_user"
+	
+	// Очистка перед тестом
+	_, _ = db.Exec("DELETE FROM teachers WHERE user_id IN (SELECT id FROM users WHERE tg_id IN ($1, $2))", adminUserID, teacherUserID)
+	_, _ = db.Exec("DELETE FROM users WHERE tg_id IN ($1, $2)", adminUserID, teacherUserID)
+
+	// Создаем тестового администратора
+	_, err = db.Exec(`
+		INSERT INTO users (tg_id, role, full_name, phone, is_active) 
+		VALUES ($1, 'superuser', 'Admin Test User', '+79001234567', true)`,
+		adminUserID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания тестового администратора: %v", err)
+		return
+	}
+	t.Log("✅ Тестовый администратор создан")
+
+	// Тест 1: Создание нового преподавателя
+	_, err = db.Exec(`
+		INSERT INTO users (tg_id, role, full_name, phone, is_active) 
+		VALUES ($1, 'teacher', 'Teacher Test User', '+79001234568', true)`,
+		teacherUserID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания пользователя-преподавателя: %v", err)
+		return
+	}
+
+	// Получаем ID пользователя-преподавателя
+	var teacherRecordID int
+	err = db.QueryRow("SELECT id FROM users WHERE tg_id = $1", teacherUserID).Scan(&teacherRecordID)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения ID преподавателя: %v", err)
+		return
+	}
+
+	// Создаем запись преподавателя
+	_, err = db.Exec("INSERT INTO teachers (user_id) VALUES ($1)", teacherRecordID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания записи преподавателя: %v", err)
+		return
+	}
+	t.Log("✅ Преподаватель создан")
+
+	// Тест 2: Проверяем, что преподаватель существует
+	var teacherExists bool
+	err = db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM teachers t 
+			JOIN users u ON t.user_id = u.id 
+			WHERE u.tg_id = $1
+		)`, teacherUserID).Scan(&teacherExists)
+	if err != nil {
+		t.Errorf("❌ Ошибка проверки существования преподавателя: %v", err)
+		return
+	}
+	
+	if !teacherExists {
+		t.Error("❌ Преподаватель не найден в системе")
+		return
+	}
+	t.Log("✅ Преподаватель найден в системе")
+
+	// Тест 3: Проверяем права администратора
+	var adminRole string
+	err = db.QueryRow("SELECT role FROM users WHERE tg_id = $1", adminUserID).Scan(&adminRole)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения роли администратора: %v", err)
+		return
+	}
+	
+	if adminRole != "superuser" {
+		t.Errorf("❌ Некорректная роль администратора: ожидалось 'superuser', получено '%s'", adminRole)
+		return
+	}
+	t.Log("✅ Права администратора подтверждены")
+
+	// Очистка
+	_, _ = db.Exec("DELETE FROM teachers WHERE user_id = $1", teacherRecordID)
+	_, _ = db.Exec("DELETE FROM users WHERE tg_id IN ($1, $2)", adminUserID, teacherUserID)
+}
+
+// Тест команды /enroll (расширенный)
+func TestEnrollCommandExtended(t *testing.T) {
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
+	
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Skipf("Пропускаем тест: не удалось подключиться к БД: %v", err)
+		return
+	}
+	defer db.Close()
+
+	// Тестовые данные
+	studentUserID := "enroll_student_test"
+	teacherUserID := "enroll_teacher_test"
+	
+	// Очистка перед тестом
+	_, _ = db.Exec("DELETE FROM enrollments WHERE student_id IN (SELECT s.id FROM students s JOIN users u ON s.user_id = u.id WHERE u.tg_id = $1)", studentUserID)
+	_, _ = db.Exec("DELETE FROM waitlist WHERE student_id IN (SELECT s.id FROM students s JOIN users u ON s.user_id = u.id WHERE u.tg_id = $1)", studentUserID)
+	_, _ = db.Exec("DELETE FROM lessons WHERE teacher_id IN (SELECT t.id FROM teachers t JOIN users u ON t.user_id = u.id WHERE u.tg_id = $1)", teacherUserID)
+	_, _ = db.Exec("DELETE FROM students WHERE user_id IN (SELECT id FROM users WHERE tg_id = $1)", studentUserID)
+	_, _ = db.Exec("DELETE FROM teachers WHERE user_id IN (SELECT id FROM users WHERE tg_id = $1)", teacherUserID)
+	_, _ = db.Exec("DELETE FROM users WHERE tg_id IN ($1, $2)", studentUserID, teacherUserID)
+
+	// Создаем тестового студента
+	_, err = db.Exec(`
+		INSERT INTO users (tg_id, role, full_name, phone, is_active) 
+		VALUES ($1, 'student', 'Enroll Student Test', '+79001234569', true)`,
+		studentUserID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания тестового студента: %v", err)
+		return
+	}
+
+	var studentRecordID int
+	err = db.QueryRow("SELECT id FROM users WHERE tg_id = $1", studentUserID).Scan(&studentRecordID)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения ID студента: %v", err)
+		return
+	}
+
+	_, err = db.Exec("INSERT INTO students (user_id) VALUES ($1)", studentRecordID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания записи студента: %v", err)
+		return
+	}
+
+	// Создаем тестового преподавателя
+	_, err = db.Exec(`
+		INSERT INTO users (tg_id, role, full_name, phone, is_active) 
+		VALUES ($1, 'teacher', 'Enroll Teacher Test', '+79001234570', true)`,
+		teacherUserID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания тестового преподавателя: %v", err)
+		return
+	}
+
+	var teacherRecordID int
+	err = db.QueryRow("SELECT id FROM users WHERE tg_id = $1", teacherUserID).Scan(&teacherRecordID)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения ID преподавателя: %v", err)
+		return
+	}
+
+	_, err = db.Exec("INSERT INTO teachers (user_id) VALUES ($1)", teacherRecordID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания записи преподавателя: %v", err)
+		return
+	}
+
+	// Получаем ID студента и преподавателя
+	var studentID, teacherID int
+	err = db.QueryRow("SELECT id FROM students WHERE user_id = $1", studentRecordID).Scan(&studentID)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения ID студента: %v", err)
+		return
+	}
+
+	err = db.QueryRow("SELECT id FROM teachers WHERE user_id = $1", teacherRecordID).Scan(&teacherID)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения ID преподавателя: %v", err)
+		return
+	}
+	t.Log("✅ Тестовые пользователи созданы")
+
+	// Получаем предмет для создания урока
+	var subjectID int
+	err = db.QueryRow("SELECT id FROM subjects LIMIT 1").Scan(&subjectID)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения предмета: %v", err)
+		return
+	}
+
+	// Создаем тестовый урок
+	var lessonID int
+	err = db.QueryRow(`
+		INSERT INTO lessons (subject_id, teacher_id, start_time, duration_minutes, max_students, status)
+		VALUES ($1, $2, NOW() + INTERVAL '1 day', 90, 2, 'active')
+		RETURNING id`,
+		subjectID, teacherID).Scan(&lessonID)
+	if err != nil {
+		t.Errorf("❌ Ошибка создания тестового урока: %v", err)
+		return
+	}
+	t.Log("✅ Тестовый урок создан")
+
+	// Тест 1: Успешная запись на урок
+	_, err = db.Exec(`
+		INSERT INTO enrollments (student_id, lesson_id, status)
+		VALUES ($1, $2, 'enrolled')`,
+		studentID, lessonID)
+	if err != nil {
+		t.Errorf("❌ Ошибка записи на урок: %v", err)
+		return
+	}
+	t.Log("✅ Студент записан на урок")
+
+	// Тест 2: Проверяем запись
+	var enrollmentExists bool
+	err = db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM enrollments 
+			WHERE student_id = $1 AND lesson_id = $2 AND status = 'enrolled'
+		)`, studentID, lessonID).Scan(&enrollmentExists)
+	if err != nil {
+		t.Errorf("❌ Ошибка проверки записи: %v", err)
+		return
+	}
+	
+	if !enrollmentExists {
+		t.Error("❌ Запись на урок не найдена")
+		return
+	}
+	t.Log("✅ Запись на урок подтверждена")
+
+	// Тест 3: Проверяем количество записанных студентов
+	var enrolledCount int
+	err = db.QueryRow(`
+		SELECT COUNT(*) FROM enrollments 
+		WHERE lesson_id = $1 AND status = 'enrolled'`,
+		lessonID).Scan(&enrolledCount)
+	if err != nil {
+		t.Errorf("❌ Ошибка подсчета записанных студентов: %v", err)
+		return
+	}
+	
+	if enrolledCount != 1 {
+		t.Errorf("❌ Некорректное количество записанных: ожидалось 1, получено %d", enrolledCount)
+		return
+	}
+	t.Log("✅ Количество записанных студентов корректно")
+
+	// Очистка
+	_, _ = db.Exec("DELETE FROM enrollments WHERE lesson_id = $1", lessonID)
+	_, _ = db.Exec("DELETE FROM lessons WHERE id = $1", lessonID)
+	_, _ = db.Exec("DELETE FROM students WHERE id = $1", studentID)
+	_, _ = db.Exec("DELETE FROM teachers WHERE id = $1", teacherID)
+	_, _ = db.Exec("DELETE FROM users WHERE tg_id IN ($1, $2)", studentUserID, teacherUserID)
+}

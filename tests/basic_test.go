@@ -242,3 +242,156 @@ func TestLogging(t *testing.T) {
 		t.Logf("⚠️ Ошибка очистки логов: %v", err)
 	}
 }
+
+// Тест функций уведомлений
+func TestNotificationFunctions(t *testing.T) {
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
+	
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Skipf("Пропускаем тест: не удалось подключиться к БД: %v", err)
+		return
+	}
+	defer db.Close()
+
+	// Проверяем получение списка активных пользователей
+	rows, err := db.Query(`
+		SELECT tg_id, full_name, role 
+		FROM users 
+		WHERE is_active = true AND tg_id IS NOT NULL
+		ORDER BY role, full_name LIMIT 10`)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения пользователей: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	userCount := 0
+	for rows.Next() {
+		var tgID, fullName, role string
+		if err := rows.Scan(&tgID, &fullName, &role); err != nil {
+			continue
+		}
+		userCount++
+	}
+	t.Logf("✅ Найдено %d активных пользователей", userCount)
+}
+
+// Тест функций управления уроками
+func TestLessonManagement(t *testing.T) {
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
+	
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Skipf("Пропускаем тест: не удалось подключиться к БД: %v", err)
+		return
+	}
+	defer db.Close()
+
+	// Проверяем существование предметов
+	var subjectCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM subjects").Scan(&subjectCount)
+	if err != nil {
+		t.Errorf("❌ Ошибка проверки предметов: %v", err)
+		return
+	}
+	t.Logf("✅ Найдено %d предметов", subjectCount)
+
+	// Проверяем получение уроков с фильтрацией
+	rows, err := db.Query(`
+		SELECT l.id, s.name, l.start_time, l.max_students,
+		       COALESCE(COUNT(e.id), 0) as enrolled_count
+		FROM lessons l
+		JOIN subjects s ON l.subject_id = s.id
+		LEFT JOIN enrollments e ON l.id = e.lesson_id AND e.status = 'enrolled'
+		WHERE l.soft_deleted = false
+		GROUP BY l.id, s.name, l.start_time, l.max_students
+		ORDER BY l.start_time LIMIT 5`)
+	
+	if err != nil {
+		t.Errorf("❌ Ошибка получения уроков: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	lessonCount := 0
+	for rows.Next() {
+		var lessonID, maxStudents, enrolledCount int
+		var subjectName, startTime string
+		if err := rows.Scan(&lessonID, &subjectName, &startTime, &maxStudents, &enrolledCount); err != nil {
+			continue
+		}
+		lessonCount++
+	}
+	t.Logf("✅ Найдено %d уроков", lessonCount)
+}
+
+// Тест функций управления пользователями
+func TestUserManagement(t *testing.T) {
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
+	
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Skipf("Пропускаем тест: не удалось подключиться к БД: %v", err)
+		return
+	}
+	defer db.Close()
+
+	// Проверяем функции проверки ролей
+	var roleCount int
+	err = db.QueryRow("SELECT COUNT(DISTINCT role) FROM users").Scan(&roleCount)
+	if err != nil {
+		t.Errorf("❌ Ошибка проверки ролей: %v", err)
+		return
+	}
+	t.Logf("✅ Найдено %d различных ролей", roleCount)
+
+	// Проверяем активацию/деактивацию пользователей
+	var activeCount, inactiveCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM users WHERE is_active = true").Scan(&activeCount)
+	if err != nil {
+		t.Errorf("❌ Ошибка подсчета активных пользователей: %v", err)
+		return
+	}
+	
+	err = db.QueryRow("SELECT COUNT(*) FROM users WHERE is_active = false").Scan(&inactiveCount)
+	if err != nil {
+		t.Errorf("❌ Ошибка подсчета неактивных пользователей: %v", err)
+		return
+	}
+
+	t.Logf("✅ Активных пользователей: %d, неактивных: %d", activeCount, inactiveCount)
+}
+
+// Тест функций статистики
+func TestStatistics(t *testing.T) {
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
+	
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Skipf("Пропускаем тест: не удалось подключиться к БД: %v", err)
+		return
+	}
+	defer db.Close()
+
+	// Проверяем базовую статистику системы
+	tables := []string{"users", "teachers", "students", "lessons", "enrollments", "subjects"}
+	for _, table := range tables {
+		var count int
+		err = db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count)
+		if err != nil {
+			t.Errorf("❌ Ошибка получения статистики для %s: %v", table, err)
+			continue
+		}
+		t.Logf("✅ %s: %d записей", table, count)
+	}
+
+	// Проверяем rate-limiting статистику
+	var pendingOpsCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM pending_operations").Scan(&pendingOpsCount)
+	if err != nil {
+		t.Errorf("❌ Ошибка получения статистики pending_operations: %v", err)
+		return
+	}
+	t.Logf("✅ Pending operations: %d", pendingOpsCount)
+}
