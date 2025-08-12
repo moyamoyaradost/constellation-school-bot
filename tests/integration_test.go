@@ -28,7 +28,7 @@ func (b *MockBot) GetSentMessages() []string {
 
 // Тест полного сценария регистрации студента
 func TestStudentRegistrationFlow(t *testing.T) {
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -89,7 +89,7 @@ func TestStudentRegistrationFlow(t *testing.T) {
 
 // Тест сценария создания преподавателя и урока
 func TestTeacherLessonFlow(t *testing.T) {
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -183,7 +183,7 @@ func TestTeacherLessonFlow(t *testing.T) {
 
 // Тест сценария записи на урок
 func TestEnrollmentFlow(t *testing.T) {
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -344,7 +344,7 @@ func TestEnrollmentFlow(t *testing.T) {
 
 // Тест обработки ошибок
 func TestErrorHandling(t *testing.T) {
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {

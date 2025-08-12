@@ -11,8 +11,8 @@ import (
 
 // Простой тест подключения к БД
 func TestDatabaseConnection(t *testing.T) {
-	// Подключение к тестовой БД (используем те же параметры)
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	// Подключение к тестовой БД (используем параметры из .env)
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestDatabaseConnection(t *testing.T) {
 
 // Тест создания таблиц
 func TestTableCreation(t *testing.T) {
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestTableCreation(t *testing.T) {
 
 // Тест базовых CRUD операций
 func TestBasicCRUD(t *testing.T) {
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -125,7 +125,7 @@ func TestBasicCRUD(t *testing.T) {
 
 // Тест rate-limiting
 func TestRateLimiting(t *testing.T) {
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -197,7 +197,7 @@ func TestRateLimiting(t *testing.T) {
 
 // Тест логирования
 func TestLogging(t *testing.T) {
-	dsn := "host=localhost port=5432 user=postgres password=password dbname=constellation_test sslmode=disable"
+	dsn := "host=localhost port=5433 user=constellation_user password=constellation_pass dbname=constellation_db sslmode=disable"
 	
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
