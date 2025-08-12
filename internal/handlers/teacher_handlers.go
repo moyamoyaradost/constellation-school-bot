@@ -31,6 +31,8 @@ func handleTeacherCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *s
 		handleRescheduleLessonCommand(bot, message, db)
 	case "cancel_lesson":
 		handleCancelLessonCommand(bot, message, db)
+	case "help_teacher":
+		handleHelpTeacherCommand(bot, message, db)
 	default:
 		sendMessage(bot, message.Chat.ID, "❓ Неизвестная команда преподавателя")
 	}

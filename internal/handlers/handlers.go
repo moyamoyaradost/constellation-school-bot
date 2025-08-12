@@ -32,9 +32,9 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) 
 		handleHelp(bot, message, db)
 	case "subjects", "schedule", "enroll", "waitlist", "my_lessons":
 		handleStudentCommand(bot, message, db)
-	case "create_lesson", "reschedule_lesson", "cancel_lesson":
+	case "create_lesson", "reschedule_lesson", "cancel_lesson", "help_teacher":
 		handleTeacherCommand(bot, message, db)
-	case "add_teacher", "delete_teacher", "notify_students", "cancel_with_notification", "reschedule_with_notify", "list_teachers", "my_students", "restore_lesson", "restore_teacher", "rate_limit_stats", "stats", "log_recent_errors":
+	case "add_teacher", "delete_teacher", "notify_students", "cancel_with_notification", "reschedule_with_notify", "list_teachers", "my_students", "restore_lesson", "restore_teacher", "rate_limit_stats", "stats", "log_recent_errors", "delete_lesson", "notify_all", "remind_all", "deactivate_student", "activate_student":
 		handleAdminCommand(bot, message, db)
 	default:
 		sendMessage(bot, message.Chat.ID, 

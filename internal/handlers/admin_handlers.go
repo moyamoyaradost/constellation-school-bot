@@ -47,6 +47,16 @@ func handleAdminCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql
 		handleStatsCommand(bot, message, db)
 	case "log_recent_errors":
 		handleLogRecentErrorsCommand(bot, message, db)
+	case "delete_lesson":
+		handleDeleteLessonCommand(bot, message, db)
+	case "notify_all":
+		handleNotifyAllCommand(bot, message, db)
+	case "remind_all":
+		handleRemindAllCommand(bot, message, db)
+	case "deactivate_student":
+		handleDeactivateStudentCommand(bot, message, db)
+	case "activate_student":
+		handleActivateStudentCommand(bot, message, db)
 	default:
 		sendMessage(bot, message.Chat.ID, "❓ Неизвестная команда администратора")
 	}
