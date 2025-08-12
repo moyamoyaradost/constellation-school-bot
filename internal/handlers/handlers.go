@@ -50,9 +50,6 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db
 		log.Printf("Ошибка callback ответа: %v", err)
 	}
 
-	if query.Data == "cancel_lesson" {
-		handleCancelLessonCallback(bot, query, db)
-	} else {
-		handleStudentCallback(bot, query, db)
-	}
+	// Обработка inline-кнопок
+	handleInlineButton(bot, query, db)
 }
