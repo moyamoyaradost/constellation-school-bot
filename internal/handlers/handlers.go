@@ -1,27 +1,23 @@
 package handlers
 
 import (
-"database/sql"
-"log"
+	"database/sql"
+	"log"
 
-tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// Основной обработчик сообщений
+// Основной обработчик обновлений
 func HandleUpdate(bot *tgbotapi.BotAPI, update tgbotapi.Update, db *sql.DB) {
 	if update.Message != nil {
-		handleMessage(bot, update.Message, db)
+		if update.Message.IsCommand() {
+			handleCommand(bot, update.Message, db)
+		} else {
+			// Обработка текста через FSM
+			handleTextMessage(bot, update.Message, db)
+		}
 	} else if update.CallbackQuery != nil {
-		handleCallbackQuery(bot, update.CallbackQuery, db)
-	}
-}
-
-// Обработка текстовых сообщений
-func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	if message.IsCommand() {
-		handleCommand(bot, message, db)
-	} else {
-		handleTextMessage(bot, message, db)
+		handleNewCallbackQuery(bot, update.CallbackQuery, db)
 	}
 }
 
@@ -33,25 +29,30 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) 
 	case "register":
 		handleRegister(bot, message, db)
 	case "help":
-		sendMessage(bot, message.Chat.ID, "🆘 Используйте /start для начала работы")
+		handleHelp(bot, message, db)
+	case "subjects", "schedule", "enroll", "waitlist", "my_lessons":
+		handleStudentCommand(bot, message, db)
+	case "create_lesson", "reschedule_lesson", "cancel_lesson":
+		handleTeacherCommand(bot, message, db)
+	case "add_teacher", "delete_teacher", "notify_students", "cancel_with_notification", "reschedule_with_notify", "list_teachers", "my_students", "restore_lesson", "restore_teacher", "rate_limit_stats", "stats":
+		handleAdminCommand(bot, message, db)
 	default:
-		sendMessage(bot, message.Chat.ID, "❓ Неизвестная команда. Используйте /start")
+		sendMessage(bot, message.Chat.ID, 
+			"❓ Неизвестная команда. Используйте /help для получения списка доступных команд.")
 	}
 }
 
 // Обработка callback запросов
 func handleCallbackQuery(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB) {
+	// Убрать индикатор загрузки
 	callback := tgbotapi.NewCallback(query.ID, "")
 	if _, err := bot.Request(callback); err != nil {
 		log.Printf("Ошибка callback ответа: %v", err)
 	}
-	sendMessage(bot, query.Message.Chat.ID, "⚙️ Функция в разработке")
-}
 
-// Вспомогательная функция отправки сообщений
-func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := bot.Send(msg); err != nil {
-		log.Printf("Ошибка отправки сообщения: %v", err)
+	if query.Data == "cancel_lesson" {
+		handleCancelLessonCallback(bot, query, db)
+	} else {
+		handleStudentCallback(bot, query, db)
 	}
 }

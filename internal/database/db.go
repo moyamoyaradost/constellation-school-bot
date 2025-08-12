@@ -100,6 +100,14 @@ func createTables(db *sql.DB) error {
 			position INTEGER NOT NULL,
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
+		
+		`CREATE TABLE IF NOT EXISTS pending_operations (
+			id SERIAL PRIMARY KEY,
+			user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+			operation VARCHAR(50) NOT NULL,
+			lesson_id INTEGER,
+			created_at TIMESTAMP DEFAULT NOW()
+		)`,
 	}
 
 	for _, table := range tables {
@@ -112,6 +120,7 @@ func createTables(db *sql.DB) error {
 	constraints := []string{
 		`CREATE INDEX idx_users_tg_id ON users(tg_id)`,           // КРИТИЧЕН: каждый запрос к боту
 		`CREATE INDEX idx_lessons_start_time ON lessons(start_time)`, // КРИТИЧЕН: расписание и сортировка
+		`CREATE INDEX idx_pending_operations_user_operation ON pending_operations(user_id, operation)`, // КРИТИЧЕН: rate-limiting
 		// Убраны избыточные индексы для упрощения (NO OVER-ENGINEERING):
 		// - idx_enrollments_lesson_id (можно восстановить при росте >100 пользователей)
 		// - idx_waitlist_lesson_id (используется редко, только при переполнении)
