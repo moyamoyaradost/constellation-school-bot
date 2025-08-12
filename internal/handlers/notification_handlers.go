@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +73,9 @@ func handleNotifyStudentsCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message
 	
 	// Отправляем уведомления студентам урока с retry-механизмом
 	sentCount, failedCount := notifyStudentsOfLesson(bot, db, lessonID, notificationText, subjectName, teacherName, startTime)
+	
+	// Логируем отправку уведомлений
+	LogSystemAction(db, "notifications_sent", fmt.Sprintf("Урок %d (%s), отправлено: %d, ошибок: %d", lessonID, subjectName, sentCount, failedCount))
 	
 	// Отчет администратору
 	resultText := "✅ **Уведомления отправлены**\n\n" +

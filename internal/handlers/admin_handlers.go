@@ -45,6 +45,8 @@ func handleAdminCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql
 		handleRateLimitStatsCommand(bot, message, db)
 	case "stats":
 		handleStatsCommand(bot, message, db)
+	case "log_recent_errors":
+		handleLogRecentErrorsCommand(bot, message, db)
 	default:
 		sendMessage(bot, message.Chat.ID, "❓ Неизвестная команда администратора")
 	}

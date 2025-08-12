@@ -243,6 +243,9 @@ func handleDeleteTeacherCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message,
 		return
 	}
 	
+	// Логируем удаление преподавателя
+	LogSystemAction(db, "teacher_deleted", fmt.Sprintf("Преподаватель %s (ID: %d) удален, отменено уроков: %d", teacherName, teacherID, len(lessonIDs)))
+	
 	// Отправляем уведомления студентам в отдельной горутине
 	go notifyStudentsAboutTeacherDeletion(bot, db, lessonIDs, teacherName)
 	
@@ -430,6 +433,9 @@ func handleRestoreTeacherCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message
 		sendMessage(bot, message.Chat.ID, "❌ Ошибка сохранения данных")
 		return
 	}
+	
+	// Логируем восстановление преподавателя
+	LogSystemAction(db, "teacher_restored", fmt.Sprintf("Преподаватель %s (ID: %d) восстановлен", teacherData.Name, teacherID))
 	
 	// Отправляем уведомления студентам
 	sent, failed := notifyStudentsAboutTeacherRestoration(bot, db, teacherID, teacherData.Name)
