@@ -39,6 +39,10 @@ func Connect(cfg *config.Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("ошибка удаления избыточных полей: %w", err)
 	}
 
+	if err := createInitialSuperUser(db); err != nil {
+		return nil, fmt.Errorf("ошибка создания суперпользователя: %w", err)
+	}
+
 	log.Println("База данных подключена и таблицы созданы")
 	return db, nil
 }
@@ -82,6 +86,7 @@ func createTables(db *sql.DB) error {
 			duration_minutes INTEGER DEFAULT 90,
 			max_students INTEGER DEFAULT 10,
 			status VARCHAR(20) DEFAULT 'active',
+			soft_deleted BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 		
@@ -111,9 +116,10 @@ func createTables(db *sql.DB) error {
 		
 		`CREATE TABLE IF NOT EXISTS simple_logs (
 			id SERIAL PRIMARY KEY,
+			level VARCHAR(10) NOT NULL,
 			action VARCHAR(100) NOT NULL,
-			user_id INTEGER REFERENCES users(id),
 			details TEXT,
+			user_id INTEGER,
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 	}
@@ -129,7 +135,6 @@ func createTables(db *sql.DB) error {
 		`CREATE INDEX idx_users_tg_id ON users(tg_id)`,           // КРИТИЧЕН: каждый запрос к боту
 		`CREATE INDEX idx_lessons_start_time ON lessons(start_time)`, // КРИТИЧЕН: расписание и сортировка
 		`CREATE INDEX idx_pending_operations_user_operation ON pending_operations(user_id, operation)`, // КРИТИЧЕН: rate-limiting
-		`CREATE INDEX idx_simple_logs_created_at ON simple_logs(created_at)`, // КРИТИЧЕН: логирование ошибок
 		// Убраны избыточные индексы для упрощения (NO OVER-ENGINEERING):
 		// - idx_enrollments_lesson_id (можно восстановить при росте >100 пользователей)
 		// - idx_waitlist_lesson_id (используется редко, только при переполнении)
@@ -338,4 +343,32 @@ func NotifyStudentsLessonCancelled(db *sql.DB, lessonID int) ([]int, error) {
 	}
 
 	return userIDs, nil
+}
+
+// createInitialSuperUser создает первого суперпользователя при инициализации
+func createInitialSuperUser(db *sql.DB) error {
+	// Проверяем, есть ли уже суперпользователи
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'superuser'").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("ошибка проверки суперпользователей: %w", err)
+	}
+
+	// Если уже есть суперпользователи, ничего не делаем
+	if count > 0 {
+		return nil
+	}
+
+	// Создаем первого суперпользователя с вашим Telegram ID
+	query := `INSERT INTO users (tg_id, role, full_name, is_active) 
+			  VALUES ($1, 'superuser', 'Владелец системы', true) 
+			  ON CONFLICT (tg_id) DO UPDATE SET role = 'superuser'`
+	
+	_, err = db.Exec(query, "7231695922")
+	if err != nil {
+		return fmt.Errorf("ошибка создания суперпользователя: %w", err)
+	}
+
+	log.Println("Создан первый суперпользователь с ID: 7231695922")
+	return nil
 }

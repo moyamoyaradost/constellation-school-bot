@@ -28,15 +28,14 @@ func parseCallbackData(data string) (*CallbackData, error) {
 		Action: parts[0],
 	}
 
-	// Для действий с lesson_id
-	if len(parts) >= 3 && parts[1] == "lesson" {
-		lessonID, err := strconv.Atoi(parts[2])
-		if err != nil {
-			return nil, fmt.Errorf("неверный lesson_id: %s", parts[2])
+	// Парсинг lesson_id если есть
+	if len(parts) > 1 {
+		if lessonID, err := strconv.Atoi(parts[1]); err == nil {
+			result.LessonID = lessonID
+		} else {
+			result.Extra = parts[1]
 		}
-		result.LessonID = lessonID
 		
-		// Дополнительные параметры
 		if len(parts) > 3 {
 			result.Extra = parts[3]
 		}
@@ -45,12 +44,128 @@ func parseCallbackData(data string) (*CallbackData, error) {
 	return result, nil
 }
 
+// Обработка callback кнопок выбора предмета для создания/удаления урока
+func handleLessonSubjectCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB) {
+	parts := strings.Split(query.Data, ":")
+	if len(parts) != 2 {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Неверный формат команды")
+		return
+	}
+	
+	action := parts[0] // "create_lesson" или "delete_lesson"
+	subjectID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Неверный ID предмета")
+		return
+	}
+	
+	// Получаем название предмета
+	var subjectName string
+	err = db.QueryRow("SELECT name FROM subjects WHERE id = $1", subjectID).Scan(&subjectName)
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Предмет не найден")
+		return
+	}
+	
+	// Проверяем права пользователя
+	userID := query.From.ID
+	var role string
+	err = db.QueryRow("SELECT role FROM users WHERE tg_id = $1", 
+		strconv.FormatInt(userID, 10)).Scan(&role)
+	
+	if err != nil || (role != "teacher" && role != "superuser") {
+		sendMessage(bot, query.Message.Chat.ID, "❌ У вас нет прав для этого действия")
+		return
+	}
+	
+	if action == "create_lesson" {
+		// Показываем форму для ввода даты и времени
+		text := fmt.Sprintf("📚 **Создание урока: %s**\n\n" +
+			"Введите дату и время урока в формате:\n" +
+			"`/create_lesson \"%s\" ДД.ММ.ГГГГ ЧЧ:ММ`\n\n" +
+			"**Пример:**\n" +
+			"`/create_lesson \"%s\" 16.08.2025 16:30`", 
+			subjectName, subjectName, subjectName)
+			
+		editMsg := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, text)
+		editMsg.ParseMode = "Markdown"
+		bot.Send(editMsg)
+		
+	} else if action == "delete_lesson" {
+		// Показываем уроки этого предмета для удаления
+		showLessonsForDeletion(bot, query, db, subjectID, subjectName)
+	}
+}
+
+// Показать уроки предмета для удаления
+func showLessonsForDeletion(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB, subjectID int, subjectName string) {
+	// Получаем уроки этого предмета для учителя
+	userID := strconv.FormatInt(query.From.ID, 10)
+	
+	rows, err := db.Query(`
+		SELECT l.id, l.lesson_date, l.lesson_time 
+		FROM lessons l 
+		JOIN subjects s ON l.subject_id = s.id 
+		WHERE l.subject_id = $1 AND l.teacher_id = $2 AND l.is_deleted = false
+		ORDER BY l.lesson_date, l.lesson_time`,
+		subjectID, userID)
+	
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Ошибка при получении уроков")
+		return
+	}
+	defer rows.Close()
+	
+	var buttons [][]tgbotapi.InlineKeyboardButton
+	lessonCount := 0
+	
+	for rows.Next() {
+		var lessonID int
+		var lessonDate, lessonTime string
+		
+		if err := rows.Scan(&lessonID, &lessonDate, &lessonTime); err != nil {
+			continue
+		}
+		
+		lessonCount++
+		buttonText := fmt.Sprintf("%s %s", lessonDate, lessonTime)
+		callbackData := fmt.Sprintf("cancel_lesson:%d", lessonID)
+		
+		button := tgbotapi.NewInlineKeyboardButtonData(buttonText, callbackData)
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{button})
+	}
+	
+	if lessonCount == 0 {
+		sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("📚 У вас нет активных уроков по предмету \"%s\"", subjectName))
+		return
+	}
+	
+	// Кнопка "Назад"
+	backButton := tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "back_to_subjects")
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{backButton})
+	
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons...)
+	text := fmt.Sprintf("📚 **Выберите урок для отмены (%s):**", subjectName)
+	
+	editMsg := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, text)
+	editMsg.ParseMode = "Markdown"
+	editMsg.ReplyMarkup = &keyboard
+	
+	bot.Send(editMsg)
+}
+
 // Новый роутер для callback запросов (заменяет существующий)
 func handleNewCallbackQuery(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB) {
 	// Убрать индикатор загрузки
 	callback := tgbotapi.NewCallback(query.ID, "")
 	if _, err := bot.Request(callback); err != nil {
 		log.Printf("Ошибка callback ответа: %v", err)
+	}
+
+	// Специальная обработка для create_lesson и delete_lesson кнопок
+	if strings.HasPrefix(query.Data, "create_lesson:") || strings.HasPrefix(query.Data, "delete_lesson:") {
+		handleLessonSubjectCallback(bot, query, db)
+		return
 	}
 
 	// Парсинг callback данных
@@ -103,7 +218,7 @@ func handleEnrollCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, d
 	if GlobalRateLimiter != nil {
 		allowed, reason := GlobalRateLimiter.IsOperationAllowed(userID, OPERATION_ENROLL, data.LessonID)
 		if !allowed {
-			callbackResponse := tgbotapi.NewCallback(query.ID, reason)
+			callbackResponse := tgbotapi.NewCallback(query.ID, reason.Error())
 			bot.Request(callbackResponse)
 			return
 		}
@@ -193,7 +308,7 @@ func handleUnenrollCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery,
 	if GlobalRateLimiter != nil {
 		allowed, reason := GlobalRateLimiter.IsOperationAllowed(userID, OPERATION_CANCEL, data.LessonID)
 		if !allowed {
-			callbackResponse := tgbotapi.NewCallback(query.ID, reason)
+			callbackResponse := tgbotapi.NewCallback(query.ID, reason.Error())
 			bot.Request(callbackResponse)
 			return
 		}
@@ -251,7 +366,7 @@ func handleWaitlistCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery,
 	if GlobalRateLimiter != nil {
 		allowed, reason := GlobalRateLimiter.IsOperationAllowed(userID, OPERATION_WAITLIST, data.LessonID)
 		if !allowed {
-			callbackResponse := tgbotapi.NewCallback(query.ID, reason)
+			callbackResponse := tgbotapi.NewCallback(query.ID, reason.Error())
 			bot.Request(callbackResponse)
 			return
 		}

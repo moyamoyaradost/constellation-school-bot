@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -131,6 +132,8 @@ func handleInlineButton(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db 
 	data := query.Data
 
 	switch {
+	case strings.HasPrefix(data, "create_lesson:") || strings.HasPrefix(data, "delete_lesson:"):
+		handleLessonSubjectCallback(bot, query, db)
 	case data == "main_menu":
 		handleMainMenu(bot, query.Message, db)
 	case data == "schedule":

@@ -49,8 +49,12 @@ func handleStart(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 	} else if err != nil {
 		sendMessage(bot, message.Chat.ID, "❌ Ошибка проверки регистрации")
 	} else {
-		// Пользователь уже зарегистрирован - показываем главное меню с кнопками
-		handleMainMenu(bot, message, db)
+		sendMessage(bot, message.Chat.ID, 
+"👋 С возвращением!\n\n"+
+"Доступные команды:\n"+
+"/subjects - просмотр предметов\n"+
+"/schedule - расписание уроков\n"+
+"/help - помощь")
 	}
 }
 

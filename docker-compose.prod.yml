@@ -1,0 +1,54 @@
+services:
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:16-alpine
+    container_name: constellation-db
+    environment:
+      POSTGRES_DB: constellation_db
+      POSTGRES_USER: constellation_user
+      POSTGRES_PASSWORD: constellation_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    networks:
+      - constellation-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U constellation_user -d constellation_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Telegram Bot
+  constellation-bot:
+    build: .
+    container_name: constellation-bot
+    env_file:
+      - production.env
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=constellation_user
+      - DB_PASSWORD=constellation_pass
+      - DB_NAME=constellation_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - constellation-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep bot || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  constellation-network:
+    driver: bridge

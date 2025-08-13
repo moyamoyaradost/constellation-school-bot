@@ -54,8 +54,9 @@ func handleHelp(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 			helpText = "🆘 Помощь для преподавателей\n\n" +
 				"👨‍🏫 Доступные команды:\n" +
 				"/create_lesson - создать урок\n" +
+				"/my_schedule - мое расписание\n" +
+				"/my_students - студенты моих уроков\n" +
 				"/cancel_lesson - отменить урок\n" +
-				"/my_students - мои студенты\n" +
 				"/help - эта справка"
 				
 		case "superuser":

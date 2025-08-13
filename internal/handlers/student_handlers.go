@@ -12,12 +12,6 @@ import (
 // Глобальный rate limiter (инициализируется в main)
 var GlobalRateLimiter *RateLimiter
 
-// InitializeRateLimiter - инициализация глобального rate limiter
-func InitializeRateLimiter(db *sql.DB) {
-	GlobalRateLimiter = NewRateLimiter(db)
-	GlobalRateLimiter.StartCleanupWorker()
-}
-
 // Обработчик команд студентов
 func handleStudentCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 	switch message.Command() {
@@ -250,7 +244,7 @@ func handleEnrollWithRateLimit(bot *tgbotapi.BotAPI, message *tgbotapi.Message, 
 	if GlobalRateLimiter != nil {
 		allowed, reason := GlobalRateLimiter.IsOperationAllowed(userID, OPERATION_ENROLL, lessonID)
 		if !allowed {
-			sendMessage(bot, message.Chat.ID, reason)
+			sendMessage(bot, message.Chat.ID, reason.Error())
 			return
 		}
 		
@@ -279,7 +273,7 @@ func handleWaitlistWithRateLimit(bot *tgbotapi.BotAPI, message *tgbotapi.Message
 	if GlobalRateLimiter != nil {
 		allowed, reason := GlobalRateLimiter.IsOperationAllowed(userID, OPERATION_WAITLIST, lessonID)
 		if !allowed {
-			sendMessage(bot, message.Chat.ID, reason)
+			sendMessage(bot, message.Chat.ID, reason.Error())
 			return
 		}
 		

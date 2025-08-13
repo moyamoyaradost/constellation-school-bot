@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -22,6 +24,7 @@ const (
 // RateLimiter - структура для управления rate limiting
 type RateLimiter struct {
 	db *sql.DB
+	mu sync.RWMutex
 }
 
 // NewRateLimiter - создает новый instance rate limiter
@@ -30,154 +33,159 @@ func NewRateLimiter(db *sql.DB) *RateLimiter {
 }
 
 // IsOperationAllowed - проверяет можно ли выполнить операцию
-func (rl *RateLimiter) IsOperationAllowed(userID int64, operation string, lessonID int) (bool, string) {
+func (rl *RateLimiter) IsOperationAllowed(userID int64, operation string, lessonID int) (bool, error) {
+	rl.mu.RLock()
+	defer rl.mu.RUnlock()
+
 	// Получаем user_id из БД по tg_id
 	var dbUserID int
-	err := rl.db.QueryRow("SELECT id FROM users WHERE tg_id = $1", userID).Scan(&dbUserID)
+	userIDStr := strconv.FormatInt(userID, 10)
+	err := rl.db.QueryRow("SELECT id FROM users WHERE tg_id = $1", userIDStr).Scan(&dbUserID)
 	if err != nil {
 		log.Printf("Ошибка получения user_id: %v", err)
-		return false, "Ошибка проверки прав доступа"
+		return false, errors.New("Ошибка проверки прав доступа")
 	}
 	
 	// Проверяем есть ли активная операция этого типа от этого пользователя
 	var pendingCount int
-	err = rl.db.QueryRow(`
+	err = rl.db.QueryRow(fmt.Sprintf(`
 		SELECT COUNT(*) FROM pending_operations 
-		WHERE user_id = $1 AND operation = $2 AND created_at > NOW() - INTERVAL '$3 minutes'`,
-		dbUserID, operation, TIMEOUT_MINUTES).Scan(&pendingCount)
+		WHERE user_id = $1 AND operation = $2 AND created_at > NOW() - INTERVAL '%d minutes'`, TIMEOUT_MINUTES),
+		dbUserID, operation).Scan(&pendingCount)
 	
 	if err != nil {
-		log.Printf("Ошибка проверки pending операций: %v", err)
-		return false, "Ошибка проверки системы"
+		log.Printf("Ошибка проверки pending operations: %v", err)
+		return false, errors.New("Ошибка проверки системы")
 	}
-	
+
 	if pendingCount > 0 {
-		return false, fmt.Sprintf("⏳ Пожалуйста, подождите. У вас есть незавершенная операция '%s'.\n"+
+		return false, fmt.Errorf("⏳ Пожалуйста, подождите. У вас есть незавершенная операция '%s'.\n"+
 			"Повторите команду через несколько секунд.", getOperationName(operation))
 	}
 	
-	// Проверяем специфичную для урока операцию (предотвращаем дубли записи на один урок)
+	// Проверяем есть ли активная операция для конкретного урока (любого типа)
 	if lessonID > 0 {
-		var lessonSpecificCount int
-		err = rl.db.QueryRow(`
+		var lessonPendingCount int
+		err = rl.db.QueryRow(fmt.Sprintf(`
 			SELECT COUNT(*) FROM pending_operations 
-			WHERE user_id = $1 AND lesson_id = $2 AND created_at > NOW() - INTERVAL '$3 minutes'`,
-			dbUserID, lessonID, TIMEOUT_MINUTES).Scan(&lessonSpecificCount)
+			WHERE user_id = $1 AND lesson_id = $2 AND created_at > NOW() - INTERVAL '%d minutes'`, TIMEOUT_MINUTES),
+			dbUserID, lessonID).Scan(&lessonPendingCount)
 		
 		if err != nil {
-			log.Printf("Ошибка проверки lesson-specific операций: %v", err)
-			return false, "Ошибка проверки системы"
+			log.Printf("Ошибка проверки lesson-specific pending operations: %v", err)
+			return false, errors.New("Ошибка проверки системы")
 		}
-		
-		if lessonSpecificCount > 0 {
-			return false, "⏳ У вас уже есть незавершенная операция для этого урока. Подождите несколько секунд."
+
+		if lessonPendingCount > 0 {
+			return false, errors.New("⏳ У вас уже есть незавершенная операция для этого урока. Подождите несколько секунд.")
 		}
 	}
 	
-	return true, ""
+	return true, nil
 }
 
 // StartOperation - регистрирует начало операции
 func (rl *RateLimiter) StartOperation(userID int64, operation string, lessonID int) error {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
 	// Получаем user_id из БД по tg_id
 	var dbUserID int
-	err := rl.db.QueryRow("SELECT id FROM users WHERE tg_id = $1", userID).Scan(&dbUserID)
+	userIDStr := strconv.FormatInt(userID, 10)
+	err := rl.db.QueryRow("SELECT id FROM users WHERE tg_id = $1", userIDStr).Scan(&dbUserID)
 	if err != nil {
-		return fmt.Errorf("ошибка получения user_id: %w", err)
+		log.Printf("Ошибка получения user_id для StartOperation: %v", err)
+		return errors.New("Ошибка системы")
 	}
-	
-	// Очищаем старые операции перед добавлением новой
-	rl.CleanupExpiredOperations()
-	
-	// Добавляем новую операцию
-	var insertLessonID interface{}
-	if lessonID > 0 {
-		insertLessonID = lessonID
-	} else {
-		insertLessonID = nil
-	}
-	
+
+	// Добавляем запись о начале операции
 	_, err = rl.db.Exec(`
-		INSERT INTO pending_operations (user_id, operation, lesson_id) 
-		VALUES ($1, $2, $3)`,
-		dbUserID, operation, insertLessonID)
+		INSERT INTO pending_operations (user_id, operation, lesson_id, created_at)
+		VALUES ($1, $2, $3, NOW())`,
+		dbUserID, operation, lessonID)
 	
 	if err != nil {
-		return fmt.Errorf("ошибка регистрации операции: %w", err)
+		log.Printf("Ошибка добавления pending operation: %v", err)
+		return errors.New("Ошибка системы")
 	}
 	
-	log.Printf("Rate limiter: начата операция %s для пользователя %d (урок %d)", operation, userID, lessonID)
+	log.Printf("🔄 Начата операция: user=%d, operation=%s, lesson=%d", userID, operation, lessonID)
 	return nil
 }
 
 // FinishOperation - завершает операцию
 func (rl *RateLimiter) FinishOperation(userID int64, operation string, lessonID int) error {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
 	// Получаем user_id из БД по tg_id
 	var dbUserID int
-	err := rl.db.QueryRow("SELECT id FROM users WHERE tg_id = $1", userID).Scan(&dbUserID)
+	userIDStr := strconv.FormatInt(userID, 10)
+	err := rl.db.QueryRow("SELECT id FROM users WHERE tg_id = $1", userIDStr).Scan(&dbUserID)
 	if err != nil {
-		return fmt.Errorf("ошибка получения user_id: %w", err)
+		log.Printf("Ошибка получения user_id для FinishOperation: %v", err)
+		return errors.New("Ошибка системы")
 	}
-	
-	// Удаляем операцию
-	var result sql.Result
-	if lessonID > 0 {
-		result, err = rl.db.Exec(`
-			DELETE FROM pending_operations 
-			WHERE user_id = $1 AND operation = $2 AND lesson_id = $3`,
-			dbUserID, operation, lessonID)
-	} else {
-		result, err = rl.db.Exec(`
-			DELETE FROM pending_operations 
-			WHERE user_id = $1 AND operation = $2 AND lesson_id IS NULL`,
-			dbUserID, operation)
-	}
+
+	// Удаляем запись об операции
+	_, err = rl.db.Exec(`
+		DELETE FROM pending_operations 
+		WHERE user_id = $1 AND operation = $2 AND lesson_id = $3`,
+		dbUserID, operation, lessonID)
 	
 	if err != nil {
-		return fmt.Errorf("ошибка завершения операции: %w", err)
+		log.Printf("Ошибка удаления pending operation: %v", err)
+		return errors.New("Ошибка системы")
 	}
 	
-	rowsAffected, _ := result.RowsAffected()
-	log.Printf("Rate limiter: завершена операция %s для пользователя %d (урок %d), удалено записей: %d", 
-		operation, userID, lessonID, rowsAffected)
-	
+	log.Printf("✅ Завершена операция: user=%d, operation=%s, lesson=%d", userID, operation, lessonID)
 	return nil
 }
 
-// CleanupExpiredOperations - удаляет устаревшие операции
-func (rl *RateLimiter) CleanupExpiredOperations() {
-	result, err := rl.db.Exec(`
+// CleanupExpiredOperations - очищает истекшие операции
+func (rl *RateLimiter) CleanupExpiredOperations() error {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	result, err := rl.db.Exec(fmt.Sprintf(`
 		DELETE FROM pending_operations 
-		WHERE created_at < NOW() - INTERVAL '$1 minutes'`, TIMEOUT_MINUTES)
+		WHERE created_at < NOW() - INTERVAL '%d minutes'`, TIMEOUT_MINUTES))
 	
 	if err != nil {
-		log.Printf("Ошибка очистки устаревших операций: %v", err)
-		return
+		log.Printf("Ошибка очистки expired operations: %v", err)
+		return err
 	}
 	
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected > 0 {
-		log.Printf("Rate limiter: очищено %d устаревших операций", rowsAffected)
+		log.Printf("🗑️ Очищено %d истекших операций", rowsAffected)
 	}
-}
-
-// GetActiveOperationsCount - получить количество активных операций (для статистики)
-func (rl *RateLimiter) GetActiveOperationsCount() (int, error) {
-	var count int
-	err := rl.db.QueryRow(`
-		SELECT COUNT(*) FROM pending_operations 
-		WHERE created_at > NOW() - INTERVAL '$1 minutes'`, TIMEOUT_MINUTES).Scan(&count)
 	
-	return count, err
+	return nil
 }
 
-// getOperationName - человекочитаемое название операции
+// Периодическая очистка истекших операций
+func (rl *RateLimiter) StartCleanupWorker() {
+	go func() {
+		ticker := time.NewTicker(2 * time.Minute) // Очистка каждые 2 минуты
+		defer ticker.Stop()
+		
+		for range ticker.C {
+			err := rl.CleanupExpiredOperations()
+			if err != nil {
+				log.Printf("⚠️ Ошибка периодической очистки: %v", err)
+			}
+		}
+	}()
+}
+
+// getOperationName - получает человеческое название операции
 func getOperationName(operation string) string {
 	switch operation {
 	case OPERATION_ENROLL:
 		return "запись на урок"
 	case OPERATION_WAITLIST:
-		return "запись в очередь"
+		return "лист ожидания"
 	case OPERATION_CANCEL:
 		return "отмена записи"
 	default:
@@ -185,38 +193,19 @@ func getOperationName(operation string) string {
 	}
 }
 
-// ================ ИНТЕГРАЦИЯ С СУЩЕСТВУЮЩИМИ ОБРАБОТЧИКАМИ ================
+// ========================= ИНТЕГРАЦИЯ С ОБРАБОТЧИКАМИ =========================
 
-// WithRateLimit - обертка для обработчиков с rate limiting
-func WithRateLimit(rateLimiter *RateLimiter, operation string, lessonID int, handler func(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB)) func(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	return func(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-		userID := message.From.ID
-		
-		// Проверяем можно ли выполнить операцию
-		allowed, reason := rateLimiter.IsOperationAllowed(userID, operation, lessonID)
-		if !allowed {
-			sendMessage(bot, message.Chat.ID, reason)
-			return
-		}
-		
-		// Регистрируем начало операции
-		if err := rateLimiter.StartOperation(userID, operation, lessonID); err != nil {
-			log.Printf("Ошибка регистрации операции: %v", err)
-			sendMessage(bot, message.Chat.ID, "❌ Системная ошибка. Попробуйте позже.")
-			return
-		}
-		
-		// Выполняем операцию
-		handler(bot, message, db)
-		
-		// Завершаем операцию
-		if err := rateLimiter.FinishOperation(userID, operation, lessonID); err != nil {
-			log.Printf("Ошибка завершения операции: %v", err)
-		}
-	}
+// Глобальный rate limiter
+var globalRateLimiter *RateLimiter
+
+// InitializeRateLimiter - инициализирует глобальный rate limiter
+func InitializeRateLimiter(db *sql.DB) {
+	globalRateLimiter = NewRateLimiter(db)
+	globalRateLimiter.StartCleanupWorker()
+	log.Println("🚀 Rate Limiter инициализирован")
 }
 
-// ExtractLessonIDFromMessage - извлекает lesson_id из сообщения
+// ExtractLessonIDFromMessage - извлекает lesson_id из сообщения  
 func ExtractLessonIDFromMessage(message *tgbotapi.Message) int {
 	if message.Text == "" {
 		return 0
@@ -231,23 +220,4 @@ func ExtractLessonIDFromMessage(message *tgbotapi.Message) int {
 	}
 	
 	return 0
-}
-
-// ===================== ПЕРИОДИЧЕСКАЯ ОЧИСТКА =========================
-
-// StartCleanupWorker - запускает фоновый процесс очистки устаревших операций
-func (rl *RateLimiter) StartCleanupWorker() {
-	go func() {
-		ticker := time.NewTicker(2 * time.Minute) // Очистка каждые 2 минуты
-		defer ticker.Stop()
-		
-		for {
-			select {
-			case <-ticker.C:
-				rl.CleanupExpiredOperations()
-			}
-		}
-	}()
-	
-	log.Println("Rate limiter: фоновый процесс очистки запущен")
 }
