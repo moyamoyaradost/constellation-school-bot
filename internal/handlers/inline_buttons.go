@@ -164,7 +164,39 @@ func handleInlineButton(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db 
 		handleBackButton(bot, query.Message, db)
 	case data == "cancel_action":
 		handleCancelAction(bot, query.Message, db)
+	// Новые студенческие кнопки
+	case data == "student_dashboard":
+		showStudentMainMenu(bot, query.Message, db)
+	case data == "enroll_subjects":
+		showSubjectsForEnrollment(bot, query.Message.Chat.ID, db)
+	case data == "my_lessons_menu":
+		handleMyLessonsCommand(bot, query.Message, db)
+	case data == "school_schedule":
+		handleScheduleCommand(bot, query.Message, db)
+	case data == "my_waitlist":
+		handleWaitlistCommand(bot, query.Message, db)
+	case data == "help_student":
+		sendMessage(bot, query.Message.Chat.ID, 
+			"📚 **Справка для студентов:**\n\n"+
+			"🎓 Главное меню: /start\n"+
+			"📚 Записаться на урок: используйте кнопки\n"+
+			"📅 Мои уроки: показывает ваши записи\n"+
+			"📆 Расписание: все уроки школы\n"+
+			"⏳ Лист ожидания: очередь на популярные уроки\n\n"+
+			"❓ Возникли вопросы? Обратитесь к администратору.")
 	default:
+		// Обработка callback'ов с предметами для записи
+		if strings.HasPrefix(data, "enroll_subject:") {
+			parts := strings.Split(data, ":")
+			if len(parts) == 2 {
+				subjectID, err := strconv.Atoi(parts[1])
+				if err == nil {
+					showAvailableLessonsForSubject(bot, query, db, subjectID)
+					return
+				}
+			}
+		}
+		
 		// Обработка динамических кнопок
 		handleDynamicButton(bot, query, db)
 	}

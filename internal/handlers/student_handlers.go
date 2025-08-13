@@ -293,3 +293,194 @@ func handleWaitlistWithRateLimit(bot *tgbotapi.BotAPI, message *tgbotapi.Message
 		handleWaitlistCommand(bot, message, db)
 	}
 }
+
+// ========================= СТУДЕНЧЕСКОЕ ГЛАВНОЕ МЕНЮ =========================
+
+// Главное меню студента с кнопками
+func showStudentMainMenu(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
+	userID := message.From.ID
+	
+	// Получаем имя студента
+	var userName string
+	err := db.QueryRow("SELECT full_name FROM users WHERE tg_id = $1", userID).Scan(&userName)
+	if err != nil {
+		userName = "Студент"
+	}
+	
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📚 Записаться на урок", "enroll_subjects"),
+			tgbotapi.NewInlineKeyboardButtonData("📅 Мои уроки", "my_lessons_menu"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📆 Расписание школы", "school_schedule"),
+			tgbotapi.NewInlineKeyboardButtonData("⏳ Мои очереди", "my_waitlist"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❓ Справка", "help_student"),
+		),
+	)
+	
+	text := fmt.Sprintf("🎓 **Добро пожаловать, %s!**\n\n" +
+		"Выберите действие:", userName)
+	
+	msg := tgbotapi.NewMessage(message.Chat.ID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+	
+	bot.Send(msg)
+}
+
+// Показать предметы для записи с кнопками
+func showSubjectsForEnrollment(bot *tgbotapi.BotAPI, chatID int64, db *sql.DB) {
+	// Получаем предметы с доступными уроками
+	rows, err := db.Query(`
+		SELECT s.id, s.name, COUNT(l.id) as available_lessons
+		FROM subjects s
+		JOIN lessons l ON l.subject_id = s.id
+		WHERE l.start_time > NOW() 
+		  AND l.soft_deleted = false
+		  AND (
+		    SELECT COUNT(*) FROM enrollments e 
+		    WHERE e.lesson_id = l.id AND e.soft_deleted = false
+		  ) < l.max_students
+		GROUP BY s.id, s.name
+		ORDER BY s.name`)
+	
+	if err != nil {
+		sendMessage(bot, chatID, "❌ Ошибка получения предметов")
+		return
+	}
+	defer rows.Close()
+	
+	var buttons [][]tgbotapi.InlineKeyboardButton
+	
+	for rows.Next() {
+		var subjectID int
+		var subjectName string
+		var availableLessons int
+		
+		if err := rows.Scan(&subjectID, &subjectName, &availableLessons); err != nil {
+			continue
+		}
+		
+		buttonText := fmt.Sprintf("📚 %s (%d уроков)", subjectName, availableLessons)
+		callbackData := fmt.Sprintf("enroll_subject:%d", subjectID)
+		
+		button := tgbotapi.NewInlineKeyboardButtonData(buttonText, callbackData)
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{button})
+	}
+	
+	if len(buttons) == 0 {
+		sendMessage(bot, chatID, "📭 Нет доступных уроков для записи")
+		return
+	}
+	
+	// Кнопка "Назад в главное меню"
+	backButton := tgbotapi.NewInlineKeyboardButtonData("🔙 Главное меню", "student_dashboard")
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{backButton})
+	
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons...)
+	
+	text := "📚 **Выберите предмет для записи:**\n\n" +
+		"В скобках указано количество доступных уроков"
+	
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+	
+	bot.Send(msg)
+}
+
+// Показать доступные уроки конкретного предмета
+func showAvailableLessonsForSubject(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB, subjectID int) {
+	userID := query.From.ID
+	
+	// Получаем уроки предмета с информацией о записях
+	rows, err := db.Query(`
+		SELECT l.id, l.start_time::date, l.start_time::time, l.max_students,
+		       COUNT(e.id) as enrolled_count,
+		       EXISTS(
+		           SELECT 1 FROM enrollments e2 
+		           WHERE e2.lesson_id = l.id AND e2.student_id = (
+		               SELECT s.id FROM students s 
+		               JOIN users u ON s.user_id = u.id 
+		               WHERE u.tg_id = $1
+		           ) AND e2.soft_deleted = false
+		       ) as is_enrolled
+		FROM lessons l
+		LEFT JOIN enrollments e ON e.lesson_id = l.id AND e.soft_deleted = false
+		WHERE l.subject_id = $2 
+		  AND l.start_time > NOW()
+		  AND l.soft_deleted = false
+		GROUP BY l.id, l.start_time, l.max_students
+		ORDER BY l.start_time`, 
+		userID, subjectID)
+	
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Ошибка получения уроков")
+		return
+	}
+	defer rows.Close()
+	
+	var buttons [][]tgbotapi.InlineKeyboardButton
+	
+	for rows.Next() {
+		var lessonID, maxStudents, enrolledCount int
+		var lessonDate, lessonTime string
+		var isEnrolled bool
+		
+		if err := rows.Scan(&lessonID, &lessonDate, &lessonTime, &maxStudents, &enrolledCount, &isEnrolled); err != nil {
+			continue
+		}
+		
+		var buttonText string
+		var callbackData string
+		
+		if isEnrolled {
+			buttonText = fmt.Sprintf("✅ %s %s (записан)", lessonDate, lessonTime)
+			callbackData = fmt.Sprintf("unenroll_lesson_%d", lessonID)
+		} else if enrolledCount >= maxStudents {
+			buttonText = fmt.Sprintf("🔒 %s %s (мест нет)", lessonDate, lessonTime)
+			callbackData = fmt.Sprintf("waitlist_lesson_%d", lessonID) // Встать в очередь
+		} else {
+			freeSpots := maxStudents - enrolledCount
+			buttonText = fmt.Sprintf("📝 %s %s (свободно %d/%d)", 
+				lessonDate, lessonTime, freeSpots, maxStudents)
+			callbackData = fmt.Sprintf("enroll_lesson_%d", lessonID)
+		}
+		
+		button := tgbotapi.NewInlineKeyboardButtonData(buttonText, callbackData)
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{button})
+	}
+	
+	if len(buttons) == 0 {
+		editMsg := tgbotapi.NewEditMessageText(
+			query.Message.Chat.ID, 
+			query.Message.MessageID,
+			"📭 Нет доступных уроков по этому предмету")
+		bot.Send(editMsg)
+		return
+	}
+	
+	// Кнопка "Назад к предметам"
+	backButton := tgbotapi.NewInlineKeyboardButtonData("🔙 К предметам", "enroll_subjects")
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{backButton})
+	
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons...)
+	
+	// Получаем название предмета
+	var subjectName string
+	db.QueryRow("SELECT name FROM subjects WHERE id = $1", subjectID).Scan(&subjectName)
+	
+	text := fmt.Sprintf("📚 **Доступные уроки: %s**\n\n", subjectName) +
+		"📝 - можно записаться\n" +
+		"🔒 - нет мест (можно встать в очередь)\n" +
+		"✅ - вы уже записаны"
+	
+	editMsg := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, text)
+	editMsg.ParseMode = "Markdown"
+	editMsg.ReplyMarkup = &keyboard
+	
+	bot.Send(editMsg)
+}

@@ -49,12 +49,15 @@ func handleStart(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 	} else if err != nil {
 		sendMessage(bot, message.Chat.ID, "❌ Ошибка проверки регистрации")
 	} else {
-		sendMessage(bot, message.Chat.ID, 
-"👋 С возвращением!\n\n"+
-"Доступные команды:\n"+
-"/subjects - просмотр предметов\n"+
-"/schedule - расписание уроков\n"+
-"/help - помощь")
+		// Показываем главное меню в зависимости от роли
+		var role string
+		db.QueryRow("SELECT role FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&role)
+		
+		if role == "student" {
+			showStudentMainMenu(bot, message, db)
+		} else {
+			handleMainMenu(bot, message, db)
+		}
 	}
 }
 

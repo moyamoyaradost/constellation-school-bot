@@ -26,6 +26,8 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) 
 	switch message.Command() {
 	case "start":
 		handleStart(bot, message, db)
+	case "menu":
+		handleMainMenu(bot, message, db)
 	case "register":
 		handleRegister(bot, message, db)
 	case "help":
