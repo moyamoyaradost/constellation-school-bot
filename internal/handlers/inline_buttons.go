@@ -32,6 +32,9 @@ func createTeacherMainMenu() tgbotapi.InlineKeyboardMarkup {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("➕ Создать урок", "create_lesson"),
+			tgbotapi.NewInlineKeyboardButtonData("🗑️ Отменить урок", "cancel_lesson"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("❓ Помощь", "help_teacher"),
 		),
 	)
@@ -136,6 +139,10 @@ func handleInlineButton(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db 
 		handleLessonSubjectCallback(bot, query, db)
 	case data == "main_menu":
 		handleMainMenu(bot, query.Message, db)
+	case data == "create_lesson":
+		handleCreateLessonButton(bot, query.Message, db)
+	case data == "cancel_lesson":
+		handleCancelLessonButton(bot, query.Message, db)
 	case data == "schedule":
 		handleScheduleButton(bot, query.Message, db)
 	case data == "my_lessons":
@@ -561,6 +568,18 @@ func handleSubjectSelection(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db 
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = createNavigationKeyboard()
 	bot.Send(msg)
+}
+
+// Обработчик кнопки "Создать урок"
+func handleCreateLessonButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
+	// Вызываем функцию показа предметов для создания урока
+	showSubjectButtons(bot, message, db, "create")
+}
+
+// Обработчик кнопки "Отменить урок"
+func handleCancelLessonButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
+	// Вызываем функцию показа предметов для удаления урока
+	showSubjectButtons(bot, message, db, "delete")
 }
 
 // Обработка подтверждений действий
