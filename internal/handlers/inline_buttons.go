@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -193,6 +194,8 @@ func handleInlineButton(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db 
 			"📆 Расписание: все уроки школы\n"+
 			"⏳ Лист ожидания: очередь на популярные уроки\n\n"+
 			"❓ Возникли вопросы? Обратитесь к администратору.")
+	case strings.HasPrefix(data, "info_lesson_"):
+		handleLessonInfoButton(bot, query, db)
 	default:
 		// Обработка callback'ов с предметами для записи
 		if strings.HasPrefix(data, "enroll_subject:") {
@@ -206,7 +209,7 @@ func handleInlineButton(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db 
 			}
 		}
 		
-		// Обработка динамических кнопок
+		// Обработка динамических кнопок (записи на уроки и т.д.)
 		handleDynamicButton(bot, query, db)
 	}
 }
@@ -249,18 +252,31 @@ func handleMainMenu(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB)
 
 // Обработка кнопки расписания
 func handleScheduleButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	text := "📅 **Расписание уроков**\n\nВыберите предмет для просмотра расписания:"
-	
-	msg := tgbotapi.NewMessage(message.Chat.ID, text)
-	msg.ParseMode = "Markdown"
-	msg.ReplyMarkup = createSubjectsKeyboard()
-	bot.Send(msg)
+	// Используем универсальную функцию расписания
+	handleScheduleCommand(bot, message, db)
 }
 
 // Обработка кнопки "Мои уроки"
 func handleMyLessonsButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	// Используем существующую функцию
-	handleMyLessonsCommand(bot, message, db)
+	userID := message.From.ID
+
+	// Получаем роль пользователя
+	userRole, err := getUserRole(db, userID)
+	if err != nil {
+		sendMessage(bot, message.Chat.ID, "❌ Ошибка определения роли пользователя")
+		return
+	}
+
+	switch userRole {
+	case "student":
+		// Для студентов показываем их записи на уроки
+		handleMyLessonsCommand(bot, message, db)
+	case "teacher", "superuser":
+		// Для преподавателей показываем их собственные уроки
+		handleMyScheduleCommand(bot, message, db)
+	default:
+		sendMessage(bot, message.Chat.ID, "❌ Неизвестная роль пользователя")
+	}
 }
 
 // Обработка кнопки "Мои студенты" (для преподавателей)
@@ -584,4 +600,102 @@ func handleCancelLessonButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, d
 func handleConfirmation(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB, actionData string) {
 	// Здесь можно добавить обработку подтверждений различных действий
 	sendMessage(bot, message.Chat.ID, "✅ Действие подтверждено!")
+}
+
+// Обработчик кнопки "Подробнее" для урока
+func handleLessonInfoButton(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB) {
+	// Извлекаем lesson ID из callback data
+	parts := strings.Split(query.Data, "_")
+	if len(parts) != 3 {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Неверный формат данных")
+		return
+	}
+	
+	lessonIDStr := parts[2]
+	lessonID, err := strconv.Atoi(lessonIDStr)
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Некорректный ID урока")
+		return
+	}
+	
+	// Получаем детальную информацию об уроке
+	var lesson struct {
+		ID            int
+		StartTime     time.Time
+		Duration      int
+		SubjectName   string
+		TeacherName   string
+		MaxStudents   int
+		EnrolledCount int
+		Status        string
+		Description   string
+	}
+	
+	err = db.QueryRow(`
+		SELECT l.id, l.start_time, l.duration_minutes, s.name, u.full_name, 
+			l.max_students, COUNT(e.id) as enrolled_count, l.status, s.description
+		FROM lessons l
+		JOIN subjects s ON l.subject_id = s.id  
+		LEFT JOIN teachers t ON l.teacher_id = t.id
+		LEFT JOIN users u ON t.user_id = u.id
+		LEFT JOIN enrollments e ON l.id = e.lesson_id AND e.status = 'enrolled'
+		WHERE l.id = $1 AND l.soft_deleted = false
+		GROUP BY l.id, l.start_time, l.duration_minutes, s.name, u.full_name, 
+			l.max_students, l.status, s.description`,
+		lessonID).Scan(&lesson.ID, &lesson.StartTime, &lesson.Duration, 
+		&lesson.SubjectName, &lesson.TeacherName, &lesson.MaxStudents, 
+		&lesson.EnrolledCount, &lesson.Status, &lesson.Description)
+		
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Урок не найден")
+		return
+	}
+	
+	// Формируем детальное описание урока
+	freeSpots := lesson.MaxStudents - lesson.EnrolledCount
+	endTime := lesson.StartTime.Add(time.Duration(lesson.Duration) * time.Minute)
+	
+	text := fmt.Sprintf("📚 **Детали урока #%d**\n\n", lesson.ID) +
+		fmt.Sprintf("📖 **Предмет:** %s\n", lesson.SubjectName) +
+		fmt.Sprintf("👨‍🏫 **Преподаватель:** %s\n", lesson.TeacherName) +
+		fmt.Sprintf("📅 **Дата:** %s\n", lesson.StartTime.Format("02.01.2006")) +
+		fmt.Sprintf("🕐 **Время:** %s - %s\n", 
+			lesson.StartTime.Format("15:04"), endTime.Format("15:04")) +
+		fmt.Sprintf("⏰ **Длительность:** %d минут\n", lesson.Duration) +
+		fmt.Sprintf("👥 **Записано:** %d из %d студентов\n", lesson.EnrolledCount, lesson.MaxStudents) +
+		fmt.Sprintf("✅ **Свободно мест:** %d\n", freeSpots) +
+		fmt.Sprintf("📊 **Статус:** %s\n", lesson.Status)
+		
+	if lesson.Description != "" {
+		text += fmt.Sprintf("\n📝 **Описание:**\n%s", lesson.Description)
+	}
+	
+	// Кнопки действий
+	userRole, _ := getUserRole(db, query.From.ID)
+	var buttons [][]tgbotapi.InlineKeyboardButton
+	
+	if userRole == "student" && freeSpots > 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ Записаться", fmt.Sprintf("enroll_lesson_%d", lesson.ID)),
+		))
+	}
+	
+	if userRole == "student" && freeSpots == 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⏳ В лист ожидания", fmt.Sprintf("waitlist_lesson_%d", lesson.ID)),
+		))
+	}
+	
+	buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад к расписанию", "back_to_schedule"),
+	))
+	
+	// Редактируем сообщение
+	editMsg := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, text)
+	editMsg.ParseMode = "Markdown"
+	editMsg.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
+	}
+	
+	bot.Send(editMsg)
 }

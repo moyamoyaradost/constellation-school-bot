@@ -330,9 +330,10 @@ func sendScheduleWithButtons(bot *tgbotapi.BotAPI, chatID int64, db *sql.DB, use
 			status += " 🟢"
 		}
 		
-		text := fmt.Sprintf("📅 **%s**\n📚 %s\n👨‍🏫 %s\n%s", 
+		text := fmt.Sprintf("� **%s** (ID: #%d)\n� %s\n👨‍🏫 %s\n%s", 
+			lesson.SubjectName, lesson.ID,
 			lesson.StartTime.Format("02.01.2006 15:04"), 
-			lesson.SubjectName, lesson.TeacherName, status)
+			lesson.TeacherName, status)
 
 		var buttons [][]tgbotapi.InlineKeyboardButton
 		
