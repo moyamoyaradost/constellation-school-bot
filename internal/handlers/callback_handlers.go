@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -99,17 +100,62 @@ func handleLessonSubjectCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQ
 
 // Показать уроки предмета для удаления
 func showLessonsForDeletion(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB, subjectID int, subjectName string) {
-	// Получаем уроки этого предмета для учителя
-	userID := strconv.FormatInt(query.From.ID, 10)
+	// Получаем уроки этого предмета 
+	userID := query.From.ID
 	
-	rows, err := db.Query(`
-		SELECT l.id, l.lesson_date, l.lesson_time 
-		FROM lessons l 
-		JOIN subjects s ON l.subject_id = s.id 
-		WHERE l.subject_id = $1 AND l.teacher_id = $2 AND l.is_deleted = false
-		ORDER BY l.lesson_date, l.lesson_time`,
-		subjectID, userID)
+	// Проверяем роль пользователя для фильтрации
+	var role string
+	var teacherID int
+	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", 
+		strconv.FormatInt(userID, 10)).Scan(&role)
+		
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Ошибка проверки прав")
+		return
+	}
 	
+	var queryStr string
+	var args []interface{}
+	
+	if role == "teacher" {
+		// Для преподавателей - только их уроки
+		err = db.QueryRow(`
+			SELECT t.id FROM teachers t 
+			JOIN users u ON t.user_id = u.id 
+			WHERE u.tg_id = $1`, strconv.FormatInt(userID, 10)).Scan(&teacherID)
+		
+		if err != nil {
+			sendMessage(bot, query.Message.Chat.ID, "❌ Преподаватель не найден")
+			return
+		}
+		
+		queryStr = `
+			SELECT l.id, l.start_time, u.full_name,
+				(SELECT COUNT(*) FROM enrollments WHERE lesson_id = l.id AND status = 'enrolled') as enrolled_count
+			FROM lessons l 
+			JOIN subjects s ON l.subject_id = s.id 
+			LEFT JOIN teachers t ON l.teacher_id = t.id
+			LEFT JOIN users u ON t.user_id = u.id
+			WHERE l.subject_id = $1 AND l.teacher_id = $2 AND l.soft_deleted = false
+				AND l.start_time > NOW()
+			ORDER BY l.start_time`
+		args = []interface{}{subjectID, teacherID}
+	} else {
+		// Для админов - все уроки предмета
+		queryStr = `
+			SELECT l.id, l.start_time, u.full_name,
+				(SELECT COUNT(*) FROM enrollments WHERE lesson_id = l.id AND status = 'enrolled') as enrolled_count
+			FROM lessons l 
+			JOIN subjects s ON l.subject_id = s.id 
+			LEFT JOIN teachers t ON l.teacher_id = t.id
+			LEFT JOIN users u ON t.user_id = u.id
+			WHERE l.subject_id = $1 AND l.soft_deleted = false
+				AND l.start_time > NOW()
+			ORDER BY l.start_time`
+		args = []interface{}{subjectID}
+	}
+	
+	rows, err := db.Query(queryStr, args...)
 	if err != nil {
 		sendMessage(bot, query.Message.Chat.ID, "❌ Ошибка при получении уроков")
 		return
@@ -121,31 +167,39 @@ func showLessonsForDeletion(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery,
 	
 	for rows.Next() {
 		var lessonID int
-		var lessonDate, lessonTime string
+		var startTime time.Time
+		var teacherName string
+		var enrolledCount int
 		
-		if err := rows.Scan(&lessonID, &lessonDate, &lessonTime); err != nil {
+		if err := rows.Scan(&lessonID, &startTime, &teacherName, &enrolledCount); err != nil {
 			continue
 		}
 		
 		lessonCount++
-		buttonText := fmt.Sprintf("%s %s", lessonDate, lessonTime)
-		callbackData := fmt.Sprintf("cancel_lesson:%d", lessonID)
+		buttonText := fmt.Sprintf("📅 %s 👨‍🏫 %s (👥%d)", 
+			startTime.Format("02.01 15:04"), teacherName, enrolledCount)
+		callbackData := fmt.Sprintf("confirm_delete_lesson:%d", lessonID)
 		
 		button := tgbotapi.NewInlineKeyboardButtonData(buttonText, callbackData)
 		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{button})
 	}
 	
 	if lessonCount == 0 {
-		sendMessage(bot, query.Message.Chat.ID, fmt.Sprintf("📚 У вас нет активных уроков по предмету \"%s\"", subjectName))
+		text := fmt.Sprintf("📚 **%s**\n\n❌ Нет активных уроков для удаления", subjectName)
+		editMsg := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, text)
+		editMsg.ParseMode = "Markdown"
+		bot.Send(editMsg)
 		return
 	}
 	
 	// Кнопка "Назад"
-	backButton := tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "back_to_subjects")
+	backButton := tgbotapi.NewInlineKeyboardButtonData("🔙 Назад к предметам", "cancel_lesson")
 	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{backButton})
 	
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons...)
-	text := fmt.Sprintf("📚 **Выберите урок для отмены (%s):**", subjectName)
+	text := fmt.Sprintf("📚 **Выберите урок для удаления (%s):**\n\n" +
+		"ℹ️ Показаны только будущие уроки\n" +
+		"👥 Число показывает количество записавшихся студентов", subjectName)
 	
 	editMsg := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, text)
 	editMsg.ParseMode = "Markdown"
@@ -165,6 +219,34 @@ func handleNewCallbackQuery(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery,
 	// Специальная обработка для create_lesson и delete_lesson кнопок
 	if strings.HasPrefix(query.Data, "create_lesson:") || strings.HasPrefix(query.Data, "delete_lesson:") {
 		handleLessonSubjectCallback(bot, query, db)
+		return
+	}
+	
+	// Обработка подтверждения удаления уроков
+	if strings.HasPrefix(query.Data, "confirm_delete_lesson:") {
+		handleConfirmDeleteLessonCallback(bot, query, db)
+		return
+	}
+	
+	// Обработка выполнения удаления уроков
+	if strings.HasPrefix(query.Data, "execute_delete_lesson:") {
+		handleExecuteDeleteLessonCallback(bot, query, db)
+		return
+	}
+	
+	// Обработка удаления преподавателей через кнопки
+	if strings.HasPrefix(query.Data, "confirm_delete_teacher_") {
+		handleConfirmDeleteTeacher(bot, query, db)
+		return
+	}
+	
+	if strings.HasPrefix(query.Data, "execute_delete_teacher_") {
+		handleExecuteDeleteTeacher(bot, query, db)
+		return
+	}
+	
+	if strings.HasPrefix(query.Data, "restore_teacher_") {
+		handleRestoreTeacherAction(bot, query, db)
 		return
 	}
 
@@ -500,6 +582,130 @@ func updateLessonMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sq
 	editMsg.ParseMode = "Markdown"
 	editMsg.ReplyMarkup = &keyboard
 	bot.Send(editMsg)
+}
+
+// Обработка подтверждения удаления урока
+func handleConfirmDeleteLessonCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB) {
+	parts := strings.Split(query.Data, ":")
+	if len(parts) != 2 {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Неверный формат команды")
+		return
+	}
+	
+	lessonID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Неверный ID урока")
+		return
+	}
+	
+	// Получаем информацию об уроке для подтверждения
+	var subjectName, teacherName string
+	var startTime time.Time
+	var enrolledCount int
+	
+	err = db.QueryRow(`
+		SELECT s.name, u.full_name, l.start_time,
+			(SELECT COUNT(*) FROM enrollments WHERE lesson_id = l.id AND status = 'enrolled') as enrolled_count
+		FROM lessons l
+		JOIN subjects s ON l.subject_id = s.id
+		LEFT JOIN teachers t ON l.teacher_id = t.id
+		LEFT JOIN users u ON t.user_id = u.id
+		WHERE l.id = $1 AND l.soft_deleted = false`, lessonID).Scan(&subjectName, &teacherName, &startTime, &enrolledCount)
+	
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Урок не найден")
+		return
+	}
+	
+	// Проверяем права пользователя
+	userID := query.From.ID
+	var role string
+	err = db.QueryRow("SELECT role FROM users WHERE tg_id = $1", 
+		strconv.FormatInt(userID, 10)).Scan(&role)
+		
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Ошибка проверки прав")
+		return
+	}
+	
+	// Для преподавателей проверяем, что это их урок
+	if role == "teacher" {
+		var teacherID int
+		err = db.QueryRow(`
+			SELECT t.id FROM teachers t 
+			JOIN users u ON t.user_id = u.id 
+			WHERE u.tg_id = $1`, strconv.FormatInt(userID, 10)).Scan(&teacherID)
+		
+		if err != nil {
+			sendMessage(bot, query.Message.Chat.ID, "❌ Преподаватель не найден")
+			return
+		}
+		
+		var lessonTeacherID int
+		err = db.QueryRow("SELECT teacher_id FROM lessons WHERE id = $1", lessonID).Scan(&lessonTeacherID)
+		if err != nil || lessonTeacherID != teacherID {
+			sendMessage(bot, query.Message.Chat.ID, "❌ Вы можете удалять только свои уроки")
+			return
+		}
+	}
+	
+	// Показываем подтверждение с деталями
+	confirmText := fmt.Sprintf("⚠️ **Подтверждение удаления урока**\n\n"+
+		"📚 **Предмет:** %s\n"+
+		"👨‍🏫 **Преподаватель:** %s\n"+
+		"📅 **Дата и время:** %s\n"+
+		"👥 **Записано студентов:** %d\n\n"+
+		"❗️ **ВНИМАНИЕ:** Все студенты получат уведомление об отмене урока!\n\n"+
+		"Вы уверены, что хотите удалить этот урок?", 
+		subjectName, teacherName, startTime.Format("02.01.2006 15:04"), enrolledCount)
+	
+	buttons := [][]tgbotapi.InlineKeyboardButton{
+		{
+			tgbotapi.NewInlineKeyboardButtonData("✅ Да, удалить", fmt.Sprintf("execute_delete_lesson:%d", lessonID)),
+			tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "cancel_lesson"),
+		},
+	}
+	
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons...)
+	editMsg := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, confirmText)
+	editMsg.ParseMode = "Markdown"
+	editMsg.ReplyMarkup = &keyboard
+	bot.Send(editMsg)
+}
+
+// Выполнение удаления урока
+func handleExecuteDeleteLessonCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB) {
+	parts := strings.Split(query.Data, ":")
+	if len(parts) != 2 {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Неверный формат команды")
+		return
+	}
+	
+	lessonID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		sendMessage(bot, query.Message.Chat.ID, "❌ Неверный ID урока")
+		return
+	}
+	
+	// Создаем временное сообщение для вызова функции удаления
+	tempMessage := *query.Message
+	tempMessage.Text = fmt.Sprintf("/delete_lesson %d", lessonID)
+	tempMessage.From = query.From
+	
+	// Вызываем существующую функцию удаления урока
+	if query.From != nil {
+		var role string
+		err = db.QueryRow("SELECT role FROM users WHERE tg_id = $1", 
+			strconv.FormatInt(query.From.ID, 10)).Scan(&role)
+			
+		if err == nil && role == "superuser" {
+			// Используем админскую функцию удаления
+			handleDeleteLessonCommand(bot, &tempMessage, db)
+		} else {
+			// Используем функцию отмены урока для преподавателей
+			handleCancelLessonCommand(bot, &tempMessage, db)
+		}
+	}
 }
 
 // Обновление сообщения с отмененным уроком
