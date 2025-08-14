@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"strconv"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -12,7 +13,7 @@ func handleHelpTeacherCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, d
 
 	// Проверяем роль пользователя
 	var role string
-	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", userID).Scan(&role)
+	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&role)
 
 	if err != nil || (role != "teacher" && role != "superuser") {
 		sendMessage(bot, message.Chat.ID, "❌ У вас нет прав для просмотра справки преподавателя")

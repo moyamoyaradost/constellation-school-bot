@@ -15,7 +15,7 @@ func handleEnrollCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sq
 
 	// Проверяем, зарегистрирован ли пользователь
 	var role string
-	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", userID).Scan(&role)
+	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&role)
 	if err != nil {
 		sendMessage(bot, message.Chat.ID, "❌ Вы не зарегистрированы. Используйте /register")
 		return
@@ -57,7 +57,7 @@ func handleEnrollCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sq
 
 	// Получаем ID студента
 	var studentID int
-	err = db.QueryRow("SELECT s.id FROM students s JOIN users u ON s.user_id = u.id WHERE u.tg_id = $1", userID).Scan(&studentID)
+	err = db.QueryRow("SELECT s.id FROM students s JOIN users u ON s.user_id = u.id WHERE u.tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&studentID)
 	if err != nil {
 		sendMessage(bot, message.Chat.ID, "❌ Вы не являетесь студентом")
 		return
@@ -160,7 +160,7 @@ func handleUnenrollCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *
 
 	// Получаем ID студента
 	var studentID int
-	err = db.QueryRow("SELECT s.id FROM students s JOIN users u ON s.user_id = u.id WHERE u.tg_id = $1", userID).Scan(&studentID)
+	err = db.QueryRow("SELECT s.id FROM students s JOIN users u ON s.user_id = u.id WHERE u.tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&studentID)
 	if err != nil {
 		sendMessage(bot, message.Chat.ID, "❌ Вы не являетесь студентом")
 		return

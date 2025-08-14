@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"log"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -30,6 +29,8 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) 
 		handleMainMenu(bot, message, db)
 	case "register":
 		handleRegister(bot, message, db)
+	case "cancel":
+		handleCancel(bot, message)
 	case "help":
 		handleHelp(bot, message, db)
 	case "subjects", "schedule", "enroll", "waitlist", "my_lessons":
@@ -44,14 +45,4 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) 
 	}
 }
 
-// Обработка callback запросов
-func handleCallbackQuery(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db *sql.DB) {
-	// Убрать индикатор загрузки
-	callback := tgbotapi.NewCallback(query.ID, "")
-	if _, err := bot.Request(callback); err != nil {
-		log.Printf("Ошибка callback ответа: %v", err)
-	}
 
-	// Обработка inline-кнопок
-	handleInlineButton(bot, query, db)
-}

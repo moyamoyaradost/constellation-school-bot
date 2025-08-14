@@ -147,6 +147,8 @@ func handleInlineButton(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, db 
 		handleScheduleButton(bot, query.Message, db)
 	case data == "my_lessons":
 		handleMyLessonsButton(bot, query.Message, db)
+	case data == "my_students":
+		handleMyStudentsButton(bot, query.Message, db)
 	case data == "help":
 		handleHelpButton(bot, query.Message, db)
 	case data == "profile":
@@ -215,7 +217,7 @@ func handleMainMenu(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB)
 
 	// Получаем роль пользователя
 	var role string
-	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", userID).Scan(&role)
+	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&role)
 	if err != nil {
 		sendMessage(bot, message.Chat.ID, "❌ Ошибка получения роли пользователя")
 		return
@@ -261,6 +263,12 @@ func handleMyLessonsButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *
 	handleMyLessonsCommand(bot, message, db)
 }
 
+// Обработка кнопки "Мои студенты" (для преподавателей)
+func handleMyStudentsButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
+	// Используем существующую функцию
+	handleTeacherStudentsCommand(bot, message, db)
+}
+
 // Обработка кнопки помощи
 func handleHelpButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 	// Используем существующую функцию
@@ -273,7 +281,7 @@ func handleProfileButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sq
 
 	var fullName, role, phone string
 	var isActive bool
-	err := db.QueryRow("SELECT full_name, role, phone, is_active FROM users WHERE tg_id = $1", userID).Scan(&fullName, &role, &phone, &isActive)
+	err := db.QueryRow("SELECT full_name, role, phone, is_active FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&fullName, &role, &phone, &isActive)
 	if err != nil {
 		sendMessage(bot, message.Chat.ID, "❌ Ошибка получения данных профиля")
 		return
@@ -311,12 +319,12 @@ func handleStatsButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.
 
 // Обработка кнопки уведомлений (для админов)
 func handleNotificationsButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	text := "📢 **Управление уведомлениями**\n\n" +
-		"Выберите тип уведомления:\n\n" +
-		"• `/notify_students <lesson_id> <текст>` - уведомления студентов урока\n" +
-		"• `/notify_all <текст>` - массовые уведомления\n" +
-		"• `/remind_all [часы]` - напоминания о уроках\n\n" +
-		"Используйте команды напрямую для отправки уведомлений."
+	text := "📢 **Система уведомлений**\n\n" +
+		"Доступные команды:\n" +
+		"• `/notify_students <lesson_id> <сообщение>` - уведомить студентов урока\n" +
+		"• `/notify_all <сообщение>` - уведомить всех пользователей\n" +
+		"• `/remind_all` - напомнить о предстоящих уроках\n\n" +
+		"Для отправки уведомлений используйте команды выше."
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	msg.ParseMode = "Markdown"
@@ -330,36 +338,31 @@ func handleLogsButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.D
 	handleLogRecentErrorsCommand(bot, message, db)
 }
 
-// Обработка кнопки помощи преподавателя
+// Обработка кнопки справки для преподавателей
 func handleHelpTeacherButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 	// Используем существующую функцию
 	handleHelpTeacherCommand(bot, message, db)
 }
 
-// Обработка кнопки помощи администратора
+// Обработка кнопки справки для админов
 func handleHelpAdminButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	helpText := "👑 **Справка администратора**\n\n" +
+	helpText := "👑 **Справка для администраторов**\n\n" +
 		"**📋 Доступные команды:**\n\n" +
 		"**👨‍🏫 Управление преподавателями:**\n" +
-		"• `/add_teacher` - добавление преподавателя\n" +
-		"• `/delete_teacher` - удаление преподавателя\n" +
-		"• `/restore_teacher` - восстановление преподавателя\n" +
-		"• `/list_teachers` - список преподавателей\n\n" +
-		"**📅 Управление уроками:**\n" +
-		"• `/create_lesson` - создание урока\n" +
-		"• `/delete_lesson` - удаление урока\n" +
-		"• `/restore_lesson` - восстановление урока\n" +
-		"• `/reschedule_lesson` - перенос урока\n\n" +
+		"• `/add_teacher <Telegram ID> <Имя> <Фамилия>` - добавить преподавателя\n" +
+		"• `/delete_teacher <teacher_id>` - удалить преподавателя\n" +
+		"• `/list_teachers` - список преподавателей\n" +
+		"• `/restore_teacher <teacher_id>` - восстановить преподавателя\n\n" +
 		"**📢 Уведомления:**\n" +
-		"• `/notify_students` - уведомления студентов\n" +
-		"• `/notify_all` - массовые уведомления\n" +
-		"• `/remind_all` - напоминания\n\n" +
-		"**👥 Управление студентами:**\n" +
-		"• `/deactivate_student` - деактивация студента\n" +
-		"• `/activate_student` - активация студента\n\n" +
-		"**📊 Аналитика:**\n" +
+		"• `/notify_students <lesson_id> <сообщение>` - уведомить студентов урока\n" +
+		"• `/notify_all <сообщение>` - уведомить всех\n" +
+		"• `/remind_all` - напомнить о предстоящих уроках\n\n" +
+		"**📊 Управление:**\n" +
 		"• `/stats` - статистика системы\n" +
-		"• `/log_recent_errors` - просмотр логов"
+		"• `/rate_limit_stats` - статистика rate limiting\n" +
+		"• `/log_recent_errors` - последние ошибки\n" +
+		"• `/activate_student <student_id>` - активировать студента\n" +
+		"• `/deactivate_student <student_id>` - деактивировать студента"
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, helpText)
 	msg.ParseMode = "Markdown"
@@ -374,12 +377,7 @@ func handleBackButton(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.D
 
 // Обработка кнопки отмены действия
 func handleCancelAction(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
-	text := "❌ **Действие отменено**\n\nВозвращаемся в главное меню."
-	
-	msg := tgbotapi.NewMessage(message.Chat.ID, text)
-	msg.ParseMode = "Markdown"
-	msg.ReplyMarkup = createNavigationKeyboard()
-	bot.Send(msg)
+	handleMainMenu(bot, message, db)
 }
 
 // Обработка динамических кнопок (запись, отписка, информация об уроке)

@@ -2,8 +2,11 @@ package handlers
 
 import (
 "database/sql"
+"fmt"
 "log"
 "strconv"
+"strings"
+"unicode"
 
 tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -22,6 +25,9 @@ StateRegistered  UserState = "registered"
 var userStates = make(map[int64]UserState)
 var userData = make(map[int64]map[string]interface{})
 
+// Timeout для состояний (в минутах)
+const StateTimeoutMinutes = 15
+
 // Получить состояние пользователя
 func getUserState(userID int64) UserState {
 	if state, exists := userStates[userID]; exists {
@@ -33,6 +39,12 @@ func getUserState(userID int64) UserState {
 // Установить состояние пользователя
 func setUserState(userID int64, state UserState) {
 	userStates[userID] = state
+}
+
+// Сбросить состояние пользователя
+func resetUserState(userID int64) {
+	delete(userStates, userID)
+	delete(userData, userID)
 }
 
 // Команда /start
@@ -64,13 +76,35 @@ func handleStart(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 // Команда /register
 func handleRegister(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.DB) {
 	userID := message.From.ID
+	
+	// Проверяем, не зарегистрирован ли уже пользователь
+	var existingUser int
+	err := db.QueryRow("SELECT id FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&existingUser)
+	if err == nil {
+		sendMessage(bot, message.Chat.ID, "✅ Вы уже зарегистрированы в системе!")
+		return
+	}
+	
 	setUserState(userID, StateWaitingName)
 	
 	if userData[userID] == nil {
 		userData[userID] = make(map[string]interface{})
 	}
 	
-	sendMessage(bot, message.Chat.ID, "📝 Введите ваше полное имя:")
+	sendMessage(bot, message.Chat.ID, "📝 Введите ваше полное имя:\n\n💡 Для отмены регистрации используйте команду /cancel")
+}
+
+// Команда /cancel - отмена регистрации
+func handleCancel(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	userID := message.From.ID
+	state := getUserState(userID)
+	
+	if state != StateIdle {
+		resetUserState(userID)
+		sendMessage(bot, message.Chat.ID, "❌ Регистрация отменена. Для начала регистрации используйте /register")
+	} else {
+		sendMessage(bot, message.Chat.ID, "📝 Нет активного процесса регистрации")
+	}
 }
 
 // Обработка текстовых сообщений через FSM
@@ -80,20 +114,51 @@ func handleTextMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.
 	
 	switch state {
 	case StateWaitingName:
-		if len(message.Text) < 2 {
+		// Улучшенная валидация имени
+		fullName := strings.TrimSpace(message.Text)
+		if len(fullName) < 2 {
 			sendMessage(bot, message.Chat.ID, "❌ Имя должно содержать минимум 2 символа")
 			return
 		}
-		userData[userID]["full_name"] = message.Text
+		
+		if len(fullName) > 100 {
+			sendMessage(bot, message.Chat.ID, "❌ Имя не должно превышать 100 символов")
+			return
+		}
+		
+		// Проверяем, что имя содержит хотя бы одну букву
+		hasLetter := false
+		for _, r := range fullName {
+			if unicode.IsLetter(r) {
+				hasLetter = true
+				break
+			}
+		}
+		
+		if !hasLetter {
+			sendMessage(bot, message.Chat.ID, "❌ Имя должно содержать хотя бы одну букву")
+			return
+		}
+		
+		userData[userID]["full_name"] = fullName
 		setUserState(userID, StateWaitingPhone)
 		sendMessage(bot, message.Chat.ID, "📱 Введите ваш номер телефона (формат: +79001234567):")
 		
 	case StateWaitingPhone:
-		if len(message.Text) < 10 {
-			sendMessage(bot, message.Chat.ID, "❌ Некорректный номер телефона")
+		// Улучшенная валидация номера телефона
+		phone := strings.TrimSpace(message.Text)
+		if len(phone) < 10 || len(phone) > 15 {
+			sendMessage(bot, message.Chat.ID, "❌ Некорректный номер телефона. Введите номер в формате +79001234567")
 			return
 		}
-		userData[userID]["phone"] = message.Text
+		
+		// Проверяем, что номер начинается с + или цифры
+		if !strings.HasPrefix(phone, "+") && !unicode.IsDigit(rune(phone[0])) {
+			sendMessage(bot, message.Chat.ID, "❌ Номер телефона должен начинаться с + или цифры")
+			return
+		}
+		
+		userData[userID]["phone"] = phone
 		
 		// Завершение регистрации
 		err := finishRegistration(userID, message.Chat.ID, db)
@@ -112,22 +177,81 @@ func handleTextMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql.
 
 // Завершение регистрации
 func finishRegistration(userID int64, chatID int64, db *sql.DB) error {
-	fullName := userData[userID]["full_name"].(string)
-	phone := userData[userID]["phone"].(string)
+	// Проверяем наличие данных
+	if userData[userID] == nil {
+		return fmt.Errorf("пользовательские данные не найдены")
+	}
 	
-	query := "INSERT INTO users (tg_id, role, full_name, phone) VALUES ($1, $2, $3, $4)"
-	_, err := db.Exec(query, strconv.FormatInt(userID, 10), "student", fullName, phone)
+	fullNameInterface, ok := userData[userID]["full_name"]
+	if !ok {
+		return fmt.Errorf("имя пользователя не указано")
+	}
+	
+	phoneInterface, ok := userData[userID]["phone"]
+	if !ok {
+		return fmt.Errorf("телефон пользователя не указан")
+	}
+	
+	fullName, ok := fullNameInterface.(string)
+	if !ok {
+		return fmt.Errorf("некорректное имя пользователя")
+	}
+	
+	phone, ok := phoneInterface.(string)
+	if !ok {
+		return fmt.Errorf("некорректный номер телефона")
+	}
+	
+	// Проверяем, не существует ли уже пользователь с таким tg_id
+	var existingCount int
+	err := db.QueryRow("SELECT COUNT(*) FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&existingCount)
 	if err != nil {
-		return err
+		log.Printf("Ошибка проверки существующего пользователя: %v", err)
+		return fmt.Errorf("ошибка проверки пользователя")
+	}
+	
+	if existingCount > 0 {
+		return fmt.Errorf("пользователь уже зарегистрирован")
+	}
+	
+	// Начинаем транзакцию
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("Ошибка начала транзакции: %v", err)
+		return fmt.Errorf("ошибка базы данных")
+	}
+	defer tx.Rollback()
+	
+	// Создаем пользователя
+	var userRecordID int
+	err = tx.QueryRow(`
+		INSERT INTO users (tg_id, role, full_name, phone, is_active, created_at) 
+		VALUES ($1, $2, $3, $4, $5, NOW()) 
+		RETURNING id`,
+		strconv.FormatInt(userID, 10), "student", fullName, phone, true).Scan(&userRecordID)
+	if err != nil {
+		log.Printf("Ошибка создания пользователя: %v", err)
+		return fmt.Errorf("ошибка создания пользователя")
 	}
 	
 	// Создание записи студента
-	var userRecordID int
-	err = db.QueryRow("SELECT id FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&userRecordID)
+	_, err = tx.Exec("INSERT INTO students (user_id, created_at) VALUES ($1, NOW())", userRecordID)
 	if err != nil {
-		return err
+		log.Printf("Ошибка создания записи студента: %v", err)
+		return fmt.Errorf("ошибка создания студента")
 	}
 	
-	_, err = db.Exec("INSERT INTO students (user_id) VALUES ($1)", userRecordID)
-	return err
+	// Подтверждаем транзакцию
+	if err = tx.Commit(); err != nil {
+		log.Printf("Ошибка подтверждения транзакции: %v", err)
+		return fmt.Errorf("ошибка сохранения данных")
+	}
+	
+	// Очищаем временные данные после успешной регистрации
+	delete(userData, userID)
+	
+	// Логируем успешную регистрацию
+	log.Printf("Пользователь %d (%s) успешно зарегистрирован", userID, fullName)
+	
+	return nil
 }

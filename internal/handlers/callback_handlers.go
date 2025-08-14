@@ -183,6 +183,17 @@ func handleNewCallbackQuery(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery,
 		return
 	}
 
+	// Обработка общих кнопок интерфейса (делегируем в handleInlineButton)
+	switch query.Data {
+	case "main_menu", "create_lesson", "cancel_lesson", "schedule", "my_lessons", 
+		 "help", "profile", "teachers", "stats", "notifications", "logs", 
+		 "help_teacher", "help_admin", "back_to_main", "back_to_schedule", 
+		 "back", "cancel_action", "student_dashboard", "enroll_subjects", 
+		 "my_lessons_menu", "school_schedule":
+		handleInlineButton(bot, query, db)
+		return
+	}
+
 	// Маршрутизация в зависимости от действия
 	switch callbackData.Action {
 	case "enroll":
@@ -200,7 +211,8 @@ func handleNewCallbackQuery(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery,
 	case "info":
 		handleLessonInfoCallback(bot, query, db, callbackData, userRole)
 	default:
-		sendMessage(bot, query.Message.Chat.ID, "❓ Неизвестное действие")
+		log.Printf("Неизвестное callback действие: %s (данные: %s)", callbackData.Action, query.Data)
+		sendMessage(bot, query.Message.Chat.ID, "❓ Неизвестное действие: " + query.Data)
 	}
 }
 

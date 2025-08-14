@@ -14,7 +14,7 @@ func handleAdminCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message, db *sql
 	
 	// Проверяем роль пользователя
 	var role string
-	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", userID).Scan(&role)
+	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&role)
 	
 	if err != nil || (role != "admin" && role != "superuser") {
 		sendMessage(bot, message.Chat.ID, "❌ У вас нет прав администратора")
@@ -68,7 +68,7 @@ func handleNotifyStudentsCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message
 	
 	// Проверяем роль пользователя (дополнительная проверка)
 	var role string
-	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", userID).Scan(&role)
+	err := db.QueryRow("SELECT role FROM users WHERE tg_id = $1", strconv.FormatInt(userID, 10)).Scan(&role)
 	
 	if err != nil || (role != "admin" && role != "superuser") {
 		sendMessage(bot, message.Chat.ID, "❌ У вас нет прав для отправки уведомлений")
